@@ -23,6 +23,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Android includes
+#include <android/sensor.h>
+//#include <android_native_app_glue.h>
+
 // Internal Includes
 #include <osvr/PluginKit/PluginKit.h>
 #include <osvr/PluginKit/TrackerInterfaceC.h>
@@ -44,7 +48,7 @@ namespace {
     class AndroidSensorTrackerDevice {
     public:
         AndroidSensorTrackerDevice(OSVR_PluginRegContext ctx,
-            ALooper* looper, ASensorManager* sensorManager, ASensor* sensor, ASensorEventQueue *sensorEventQueue)
+            ALooper *looper, ASensorManager *sensorManager, const ASensor *sensor, ASensorEventQueue *sensorEventQueue)
             : m_looper(looper), m_sensorManager(sensorManager), m_sensor(sensor), m_sensorEventQueue(sensorEventQueue)
         {
             // @todo sanity check for constructor arguments. All ptrs have to
@@ -54,19 +58,19 @@ namespace {
             OSVR_DeviceInitOptions opts = osvrDeviceCreateInitOptions(ctx);
 
             /// Indicate that we'll want 1 analog channel.
-            osvrDeviceTrackerConfigure(opts, &m_analog, 1);
+            osvrDeviceTrackerConfigure(opts, &m_tracker);
 
             /// Create the sync device token with the options
             m_dev.initSync(ctx, "AndroidSensorTracker", opts);
 
             /// Send JSON descriptor
-            m_dev.sendJsonDescriptor(com_osvr_androidOrientation_json);
+            m_dev.sendJsonDescriptor(com_osvr_android_sensorTracker_json);
 
             /// Register update callback
             m_dev.registerUpdateCallback(this);
         }
 
-        ~AndroidTrackerDevice() {
+        ~AndroidSensorTrackerDevice() {
             // @todo any cleanup needed for the sensors.
         }
 
@@ -103,7 +107,7 @@ namespace {
                     // from the sensor event. For now, just let osvr use the
                     // current time.
 
-                    osvrDeviceTrackerSendPose(m_dev, m_tracker, &pose);
+                    osvrDeviceTrackerSendPose(m_dev, m_tracker, &pose, 0);
                 }
             }
             return OSVR_RETURN_SUCCESS;
@@ -114,7 +118,7 @@ namespace {
         OSVR_TrackerDeviceInterface m_tracker;
         ALooper* m_looper;
         ASensorManager* m_sensorManager;
-        ASensor* m_sensor;
+        const ASensor* m_sensor;
         ASensorEventQueue* m_sensorEventQueue;
     };
 
@@ -125,36 +129,36 @@ namespace {
 
             std::cout << "[OSVR] Android plugin: Got a hardware detection request" << std::endl;
             // Get the ALooper for the current thread
-            looper = ALooper_forThread();
-            if (nullptr == looper) {
+            ALooper* looper = ALooper_forThread();
+            if (NULL == looper) {
                 std::cout << "[OSVR] Android plugin: There is no ALooper instance for the current thread. Can't get sensor data without one."
                     << std::endl;
                 return OSVR_RETURN_FAILURE;
             }
 
             // The sensor manager is a singleton
-            sensorManager = ASensorManager_getInstance();
-            if (nullptr == sensorManager) {
+            ASensorManager* sensorManager = ASensorManager_getInstance();
+            if (NULL == sensorManager) {
                 std::cout << "[OSVR] Android plugin: Couldn't get the ASensorManager for this thread." << std::endl;
                 return OSVR_RETURN_FAILURE;
             }
 
             // get the default Accelerometer sensor and enable it
-            sensor = ASensorManager_getDefaultSensor(sensorManager, TYPE_GAME_ROTATION_VECTOR);
-            if (nullptr == sensor) {
+            const ASensor* sensor = ASensorManager_getDefaultSensor(sensorManager, TYPE_GAME_ROTATION_VECTOR);
+            if (NULL == sensor) {
                 std::cout << "[OSVR] Android plugin: Couldn't get the default ASensor instance for TYPE_GAME_ROTATION_VECTOR" << std::endl;
                 return OSVR_RETURN_FAILURE;
             }
 
-            if (ASensorEventQueue_enableSensor(sensorManager, sensor) < 0) {
-                std::cout << "[OSVR] Android plugin: Couldn't enable the game rotation vector sensor." << std::endl;
+            // Create a default event queue
+            ASensorEventQueue *sensorEventQueue = ASensorManager_createEventQueue(sensorManager, looper, 3 /*LOOPER_ID_USER*/, NULL, NULL);
+            if (NULL == sensorEventQueue) {
+                std::cout << "[OSVR] Android plugin: Couldn't create a sensor event queue." << std::endl;
                 return OSVR_RETURN_FAILURE;
             }
 
-            // Create a default event queue
-            auto sensorEventQueue = ASensorManager_createEventQueue(sensorManager, looper, LOOPER_ID_USER, NULL, NULL);
-            if (nullptr == sensorEventQueue) {
-                std::cout << "[OSVR] Android plugin: Couldn't create a sensor event queue." << std::endl;
+            if (ASensorEventQueue_enableSensor(sensorEventQueue, sensor) < 0) {
+                std::cout << "[OSVR] Android plugin: Couldn't enable the game rotation vector sensor." << std::endl;
                 return OSVR_RETURN_FAILURE;
             }
 
