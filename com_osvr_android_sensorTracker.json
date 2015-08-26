@@ -1,0 +1,21 @@
+{
+  "deviceVendor": "OSVR",
+  "deviceName": "Android Orientation Sensor Tracker Plugin",
+  "author": "Jeremy Bell <jeremy@sensics.com>",
+  "version": 1,
+  "lastModified": "2015-01-30T21:13:07.585Z",
+  "interfaces": {
+    "tracker": {
+      "count": 1,
+      "bounded": true,
+      "position": false,
+      "orientation": true
+    }
+  },
+  "semantic": {
+    "hmd": "tracker/0"
+  },
+  "automaticAliases": {
+    "/me/head": "semantic/hmd"
+  }
+}
