@@ -1,15 +1,14 @@
 /** @file
-    @brief Comprehensive example: Implementation of a dummy Hardware Detect
-    Callback that creates a dummy device when it is "detected"
+    @brief Android sensor based tracker plugin, currently supporting orientation only.
 
-    @date 2014
+    @date 2015
 
     @author
     Sensics, Inc.
     <http://sensics.com/osvr>
     */
 
-// Copyright 2014 Sensics, Inc.
+// Copyright 2015 Sensics, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.

@@ -1,5 +1,5 @@
-cmake_minimum_required(VERSION 2.8.12)
-project(android_sensor_tracker) # Change this line.
+cmake_minimum_required(VERSION 3.1)
+project(android_sensor_tracker)
 
 # This looks for an osvrConfig.cmake file - most of the time it can be
 # autodetected but you might need to create/extend CMAKE_PREFIX_PATH to include something like
@@ -9,7 +9,7 @@ project(android_sensor_tracker) # Change this line.
 find_package(osvr)
 
 # This generates a header file, from the named json file, containing a string literal
-# named com_osvr_androidOrientation_json (not null terminated)
+# named com_osvr_android_sensorTracker_json (not null terminated)
 # The file must be added as a source file to some target (as below) to be generated.
 osvr_convert_json(com_osvr_android_sensorTracker_json
     com_osvr_android_sensorTracker.json
