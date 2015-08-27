@@ -70,7 +70,9 @@ namespace {
         }
 
         ~AndroidSensorTrackerDevice() {
-            // @todo any cleanup needed for the sensors.
+            if(ASensorManager_destroyEventQueue(m_SensorManager, m_sensorEventQueue) < 0) {
+              std::cout << "[OSVR]: Android sensor tracker - Could not destroy sensor event queue.";
+            }
         }
 
         OSVR_ReturnCode update() {
@@ -128,7 +130,7 @@ namespace {
 
             std::cout << "[OSVR] Android plugin: Got a hardware detection request" << std::endl;
             // Get the ALooper for the current thread
-            ALooper* looper = ALooper_forThread();
+            ALooper* looper = ALooper_prepare();
             if (NULL == looper) {
                 std::cout << "[OSVR] Android plugin: There is no ALooper instance for the current thread. Can't get sensor data without one."
                     << std::endl;
