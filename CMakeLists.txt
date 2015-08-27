@@ -29,4 +29,4 @@ osvr_add_plugin(NAME com_osvr_android_sensorTracker
   "${CMAKE_CURRENT_BINARY_DIR}/com_osvr_android_sensorTracker_json.h")
 
 # If you use other libraries, find them and add a line like:
-# target_link_libraries(com_osvr_android_sensorTracker AnyOtherLibraries)
+target_link_libraries(com_osvr_android_sensorTracker android)
