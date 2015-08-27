@@ -70,7 +70,7 @@ namespace {
         }
 
         ~AndroidSensorTrackerDevice() {
-            if(ASensorManager_destroyEventQueue(m_SensorManager, m_sensorEventQueue) < 0) {
+            if(ASensorManager_destroyEventQueue(m_sensorManager, m_sensorEventQueue) < 0) {
               std::cout << "[OSVR]: Android sensor tracker - Could not destroy sensor event queue.";
             }
         }
@@ -130,7 +130,7 @@ namespace {
 
             std::cout << "[OSVR] Android plugin: Got a hardware detection request" << std::endl;
             // Get the ALooper for the current thread
-            ALooper* looper = ALooper_prepare();
+            ALooper* looper = ALooper_prepare(0);
             if (NULL == looper) {
                 std::cout << "[OSVR] Android plugin: There is no ALooper instance for the current thread. Can't get sensor data without one."
                     << std::endl;
@@ -163,9 +163,17 @@ namespace {
                 return OSVR_RETURN_FAILURE;
             }
 
-            // set the event rate to 100Hz
-            // @todo check minimum sensor rate and set this more intelligently.
-            if (ASensorEventQueue_setEventRate(sensorEventQueue, sensor, 100000) < 0) {
+            // it's an error to set the desired event rate to something less than
+            // the minimum sensor delay.
+            int minSensorDelay = ASensor_getMinDelay(sensor);
+            if(minSensorDelay == 0) {
+              // the sensor reports continuously, not at a fixed rate
+              // so just set the event rate to 100Hz
+              minSensorDelay = 100000;
+            }
+
+            // desired event rate
+            if (ASensorEventQueue_setEventRate(sensorEventQueue, sensor, minSensorDelay) < 0) {
                 std::cout << "[OSVR] Android plugin: Couldn't set the event rate." << std::endl;
                 // this probably isn't fatal. We'll just let it send us events as often as it wants
             }
