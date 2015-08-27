@@ -97,18 +97,17 @@ namespace {
                     // we may also need to add some rotation to the device
                     // descriptor, as we do with the HDK.
 
-                    OSVR_PoseState pose;
-                    osvrPose3SetIdentity(&pose);
-                    pose.rotation.data[0] = x;
-                    pose.rotation.data[1] = y;
-                    pose.rotation.data[2] = z;
-                    pose.rotation.data[3] = w;
+                    OSVR_OrientationState orientation;
+                    osvrQuatSetIdentity(&orientation);
+                    osvrQuatSetW(&orientation, w);
+                    osvrQuatSetX(&orientation, x);
+                    osvrQuatSetY(&orientation, y);
+                    osvrQuatSetZ(&orientation, z);
 
                     // @todo look into whether we can convert/use the timestamp
                     // from the sensor event. For now, just let osvr use the
                     // current time.
-
-                    osvrDeviceTrackerSendPose(m_dev, m_tracker, &pose, 0);
+                    osvrDeviceTrackerSendOrientation(m_dev, m_tracker, &orientation, 0);
                 }
             }
             return OSVR_RETURN_SUCCESS;
