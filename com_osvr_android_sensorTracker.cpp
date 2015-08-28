@@ -24,6 +24,8 @@
 
 // Android includes
 #include <android/sensor.h>
+#include <cmath>
+
 //#include <android_native_app_glue.h>
 
 // Internal Includes
@@ -90,7 +92,7 @@ namespace {
 
                     // originally optional prior to SDK Level 18
                     if (w < 0.0f) {
-                        w = 0.0f;
+                        w = std::sqrt(1.0f - (x * x + y * y + z * z));
                     }
 
                     // @todo check if we need to do any conversions here
