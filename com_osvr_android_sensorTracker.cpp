@@ -82,29 +82,43 @@ namespace {
             while (ASensorEventQueue_getEvents(m_sensorEventQueue, &e, 1) > 0)
             {
                 if (e.type == TYPE_GAME_ROTATION_VECTOR || e.type == TYPE_ROTATION_VECTOR) {
+                    // if things look weird (like swapping x and y), it's because we're transforming
+                    // the rotation vector from the world coordinate system to OSVR.
+                    
                     //int64_t timestamp = e.timestamp;
-                    float x = e.data[0];
-                    float y = e.data[1];
-                    float z = e.data[2];
-                    float w = e.data[3];
+                    float x2 = -e.data[1];
+                    float y2 = e.data[0];
+                    float z2 = e.data[2];
+                    float w2 = e.data[3];
                     // Added in SDK Level 18. Might use it for custom filtering?
                     // float estimatedHeadingAccuracy = e.data[4]; // in radians
 
                     // originally optional prior to SDK Level 18
-                    if (w < 0.0f) {
-                        w = std::sqrt(1.0f - (x * x + y * y + z * z));
+                    if (w2 < 0.0f) {
+                        w2 = std::sqrt(1.0f - (x2 * x2 + y2 * y2 + z2 * z2));
                     }
+                    
+                    // By default, (w2, x2, y2, z2) points straight down when you're looking ahead,
+                    // so rotate it up (negative) by 90 degrees (M_PI_2)
+                    float sinRThetaOver2 = std::sin(-M_PI_4);
+                    float x1 = sinRThetaOver2;
+                    float y1 = 0.0f;
+                    float z1 = 0.0f;
+                    float w1 = std::cos(M_PI_4);
+                    
+                    float fw = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2;
+                    float fx = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2;
+                    float fy = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2;
+                    float fz = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2;
 
-                    // @todo check if we need to do any conversions here
-                    // we may also need to add some rotation to the device
-                    // descriptor, as we do with the HDK.
+                    // @todo we may need to renormalize here
 
                     OSVR_OrientationState orientation;
                     osvrQuatSetIdentity(&orientation);
-                    osvrQuatSetW(&orientation, w);
-                    osvrQuatSetX(&orientation, x);
-                    osvrQuatSetY(&orientation, y);
-                    osvrQuatSetZ(&orientation, z);
+                    osvrQuatSetW(&orientation, fw);
+                    osvrQuatSetX(&orientation, fx);
+                    osvrQuatSetY(&orientation, fy);
+                    osvrQuatSetZ(&orientation, fz);
 
                     // @todo look into whether we can convert/use the timestamp
                     // from the sensor event. For now, just let osvr use the
