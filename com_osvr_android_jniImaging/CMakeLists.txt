@@ -30,3 +30,5 @@ osvr_add_plugin(NAME com_osvr_android_jniImaging
 
 # If you use other libraries, find them and add a line like:
 target_link_libraries(com_osvr_android_jniImaging android)
+target_link_libraries(com_osvr_android_jniImaging log)
+target_link_libraries(com_osvr_android_jniImaging opencv_core)

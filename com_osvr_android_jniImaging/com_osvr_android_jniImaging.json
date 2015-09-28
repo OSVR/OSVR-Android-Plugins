@@ -5,7 +5,9 @@
   "version": 1,
   "lastModified": "2015-01-30T21:13:07.585Z",
   "interfaces": {
-    "imaging": {}
+    "imaging": {
+        "channelValue": ["Y", "Cb", "Cr"]
+    }
   },
   "automaticAliases": {
     "/camera": "imaging/0"
