@@ -91,7 +91,7 @@ namespace {
           : m_camera(cameraNum), m_channel(channel), m_reportNumber(0) {
             // @todo sanity check for constructor arguments. All ptrs have to
             // be non-null
-            //LOGI("[OSVR] AndroidJniImagingDevice instantiated");
+            LOGI("[OSVR] AndroidJniImagingDevice instantiated");
             /// Create the initialization options
             OSVR_DeviceInitOptions opts = osvrDeviceCreateInitOptions(ctx);
 
@@ -126,6 +126,7 @@ namespace {
           // Send the image.
           // Note that if larger than 160x120 (RGB), will used shared memory
           // backend only.
+
           if(gLastFrame) {
               LOGI("[OSVR] image report # %d called", m_reportNumber++);
               OSVR_ImageBufferElement* buffer
@@ -135,8 +136,7 @@ namespace {
 
               cv::Mat frame(gLastFrameMetadata.width, gLastFrameMetadata.height, CV_8UC3, buffer);
 
-              m_dev.send(m_imaging, osvr::pluginkit::ImagingMessage(frame, 3),
-                   frameTime);
+              m_dev.send(m_imaging, osvr::pluginkit::ImagingMessage(frame), frameTime);
 
               // The interface takes ownership of the image data. Also, we don't
               // want to send the image more than once.
@@ -165,12 +165,13 @@ namespace {
                 return OSVR_RETURN_SUCCESS;
             }
 
-            std::cout << "[OSVR] Android Jni Imaging plugin: Got a hardware detection request" << std::endl;
+            LOGI("[OSVR] Android Jni Imaging plugin: Got a hardware detection request");
 
             /// Create our device object
             osvr::pluginkit::registerObjectForDeletion(ctx,
                 new AndroidJniImagingDevice(ctx));
 
+            m_found = true;
             return OSVR_RETURN_SUCCESS;
         }
 
