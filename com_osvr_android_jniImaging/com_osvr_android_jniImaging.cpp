@@ -140,7 +140,7 @@ namespace {
 
               // The interface takes ownership of the image data. Also, we don't
               // want to send the image more than once.
-              delete[] gLastFrame;
+              delete[] buffer;
               gLastFrame = NULL;
           }
 
