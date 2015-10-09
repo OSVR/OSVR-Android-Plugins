@@ -31,6 +31,7 @@
 #include <osvr/Util/ChannelCountC.h>
 #include <osvr/PluginKit/DeviceInterface.h>
 #include <osvr/Util/StringLiteralFileToString.h>
+//#include <opencv2/imgproc/imgproc.hpp>
 
 // Generated JSON header file
 #include "com_osvr_android_jniImaging_json.h"
@@ -50,36 +51,54 @@
 extern OSVR_ImageBufferElement *gLastFrame;
 extern OSVR_ImagingMetadata gLastFrameMetadata;
 
-// based off of code from here: http://www.java2s.com/Open-Source/Android_Free_Code/WallPaper/screen/com_yaji_viewfinderImageUtil_java.htm
-// which in turn was based off the android open source project. Both Apache licensed.
-static void decodeYUV420SP(OSVR_ImageBufferElement* rgb, OSVR_ImageBufferElement* yuv420sp, int width, int height) {
-  int frameSize = width * height;
 
-  for (int j = 0, yp = 0; j < height; j++) {
-    int uvp = frameSize + (j >> 1) * width, u = 0, v = 0;
-    for (int i = 0; i < width; i++, yp++) {
-      int y = (0xff & ((int) yuv420sp[yp])) - 16;
-      if (y < 0) y = 0;
-      if ((i & 1) == 0) {
-        v = (0xff & yuv420sp[uvp++]) - 128;
-        u = (0xff & yuv420sp[uvp++]) - 128;
-      }
+// Based on algorithm by andre chen
+// https://github.com/andrechen/yuv2rgb
 
-      int y1192 = 1192 * y;
-      int r = (y1192 + 1634 * v);
-      int g = (y1192 - 833 * v - 400 * u);
-      int b = (y1192 + 2066 * u);
+static void writePixel(unsigned char* &d, int r, int g, int b) {
+	*d++ = (r > 0) ? (r < 65535 ? (r >> 8) : 0xff) : 0; // r
+    *d++ = (g > 0) ? (g < 65535 ? (g >> 8) : 0xff) : 0; // g
+    *d++ = (b > 0) ? (b < 65535 ? (b >> 8) : 0xff) : 0; // b
+	*d++ = 255; // alpha
+}
 
-      if (r < 0) r = 0; else if (r > 262143) r = 262143;
-      if (g < 0) g = 0; else if (g > 262143) g = 262143;
-      if (b < 0) b = 0; else if (b > 262143) b = 262143;
+static void NV21_to_RGBA(OSVR_ImageBufferElement *rgba, OSVR_ImageBufferElement * nv21, int width, int height) {
+    OSVR_ImageBufferElement *d0 = rgba;
+    OSVR_ImageBufferElement *y0 = nv21;
+    OSVR_ImageBufferElement *uv = nv21 + (width * height);
 
-      rgb[yp * 3] = r;
-      rgb[yp * 3 + 1] = g;
-      rgb[yp * 3 + 2] = b;
-      //rgb[yp] = 0xff000000 | ((r << 6) & 0xff0000) | ((g >> 2) & 0xff00) | ((b >> 10) & 0xff);
+    int const halfHeight = height >> 1;
+    int const halfWidth = width >> 1;
+
+    for(int h = 0; h < halfHeight; ++h) {
+        OSVR_ImageBufferElement *y1 = y0 + width;
+        OSVR_ImageBufferElement *d1 = d0 + width * 4;
+        for(int w = 0; w < halfWidth; ++w) {
+            int y00 = (*y0++) - 16;
+            int y01 = (*y0++) - 16;
+            int y10 = (*y1++) - 16;
+            int y11 = (*y1++) - 16;
+
+            int v = (*uv++) - 128;
+            int u = (*uv++) - 128;
+
+            y00 = (y00 > 0) ? (298 * y00) : 0;
+            y01 = (y01 > 0) ? (298 * y01) : 0;
+            y10 = (y10 > 0) ? (298 * y10) : 0;
+            y11 = (y11 > 0) ? (298 * y11) : 0;
+
+            int r = 128 + 409 * v;
+            int g = 128 - 100 * u - 208 * v;
+            int b = 128 + 516 * u;
+
+            writePixel(d0, y00 + r, y00 + g, y00 + b);
+            writePixel(d0, y01 + r, y01 + g, y01 + b);
+            writePixel(d1, y10 + r, y10 + g, y10 + b);
+            writePixel(d1, y11 + r, y11 + g, y11 + b);
+        }
+        y0 = y1;
+        d0 = d1;
     }
-  }
 }
 
 // Anonymous namespace to avoid symbol collision
@@ -91,7 +110,7 @@ namespace {
           : m_camera(cameraNum), m_channel(channel), m_reportNumber(0) {
             // @todo sanity check for constructor arguments. All ptrs have to
             // be non-null
-            LOGI("[OSVR] AndroidJniImagingDevice instantiated");
+            //LOGI("[OSVR] AndroidJniImagingDevice instantiated");
             /// Create the initialization options
             OSVR_DeviceInitOptions opts = osvrDeviceCreateInitOptions(ctx);
 
@@ -128,13 +147,17 @@ namespace {
           // backend only.
 
           if(gLastFrame) {
-              LOGI("[OSVR] image report # %d called", m_reportNumber++);
-              OSVR_ImageBufferElement* buffer
-                  = new OSVR_ImageBufferElement[gLastFrameMetadata.width * gLastFrameMetadata.height * gLastFrameMetadata.channels];
+              //LOGI("[OSVR] image report # %d called", m_reportNumber++);
+              gLastFrameMetadata.channels = 4;
+              gLastFrameMetadata.depth = 1;
+              unsigned int width = gLastFrameMetadata.width;
+              unsigned int height = gLastFrameMetadata.height;
+              unsigned int channels = gLastFrameMetadata.channels;
+               OSVR_ImageBufferElement* buffer
+                   = new OSVR_ImageBufferElement[width * height * channels];
 
-              decodeYUV420SP(buffer, gLastFrame, gLastFrameMetadata.width, gLastFrameMetadata.height);
-
-              cv::Mat frame(gLastFrameMetadata.width, gLastFrameMetadata.height, CV_8UC3, buffer);
+              NV21_to_RGBA(buffer, gLastFrame, width, height);
+              cv::Mat frame(height, width, CV_8UC4, buffer);
 
               m_dev.send(m_imaging, osvr::pluginkit::ImagingMessage(frame), frameTime);
 
@@ -165,7 +188,7 @@ namespace {
                 return OSVR_RETURN_SUCCESS;
             }
 
-            LOGI("[OSVR] Android Jni Imaging plugin: Got a hardware detection request");
+            //LOGI("[OSVR] Android Jni Imaging plugin: Got a hardware detection request");
 
             /// Create our device object
             osvr::pluginkit::registerObjectForDeletion(ctx,
