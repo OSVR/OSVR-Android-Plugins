@@ -207,7 +207,7 @@ namespace {
     };
 } // namespace
 
-OSVR_PLUGIN(com_osvr_androidOrientation) {
+OSVR_PLUGIN(com_osvr_android_sensorTracker) {
     osvr::pluginkit::PluginContext context(ctx);
 
     /// Register a detection callback function object.
