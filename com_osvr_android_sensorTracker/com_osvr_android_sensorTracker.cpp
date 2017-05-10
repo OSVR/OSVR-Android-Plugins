@@ -36,10 +36,14 @@
 #include "com_osvr_android_sensorTracker_json.h"
 
 // Library/third-party includes
-// - none
+#include <android/log.h>
 
 // Standard includes
 #include <iostream>
+
+#define  LOG_TAG    "libgl2jni"
+#define  LOGI(...)  __android_log_print(ANDROID_LOG_INFO,LOG_TAG,__VA_ARGS__)
+#define  LOGE(...)  __android_log_print(ANDROID_LOG_ERROR,LOG_TAG,__VA_ARGS__)
 
 // Anonymous namespace to avoid symbol collision
 namespace {
@@ -73,7 +77,7 @@ namespace {
 
         ~AndroidSensorTrackerDevice() {
             if(ASensorManager_destroyEventQueue(m_sensorManager, m_sensorEventQueue) < 0) {
-              std::cout << "[OSVR]: Android sensor tracker - Could not destroy sensor event queue.";
+              LOGI("[com_osvr_android_sensorTracker]: Android sensor tracker - Could not destroy sensor event queue.");
             }
         }
 
@@ -143,38 +147,37 @@ namespace {
         HardwareDetection() {}
         OSVR_ReturnCode operator()(OSVR_PluginRegContext ctx) {
 
-            std::cout << "[OSVR] Android plugin: Got a hardware detection request" << std::endl;
+            LOGI("[com_osvr_android_sensorTracker]: Got a hardware detection request");
             // Get the ALooper for the current thread
             ALooper* looper = ALooper_prepare(0);
             if (NULL == looper) {
-                std::cout << "[OSVR] Android plugin: There is no ALooper instance for the current thread. Can't get sensor data without one."
-                    << std::endl;
+                LOGE("[com_osvr_android_sensorTracker]: There is no ALooper instance for the current thread. Can't get sensor data without one.");
                 return OSVR_RETURN_FAILURE;
             }
 
             // The sensor manager is a singleton
             ASensorManager* sensorManager = ASensorManager_getInstance();
             if (NULL == sensorManager) {
-                std::cout << "[OSVR] Android plugin: Couldn't get the ASensorManager for this thread." << std::endl;
+                LOGE("[com_osvr_android_sensorTracker]: Couldn't get the ASensorManager for this thread.");
                 return OSVR_RETURN_FAILURE;
             }
 
             // get the default Accelerometer sensor and enable it
             const ASensor* sensor = ASensorManager_getDefaultSensor(sensorManager, TYPE_GAME_ROTATION_VECTOR);
             if (NULL == sensor) {
-                std::cout << "[OSVR] Android plugin: Couldn't get the default ASensor instance for TYPE_GAME_ROTATION_VECTOR" << std::endl;
+                LOGE("[com_osvr_android_sensorTracker]: Couldn't get the default ASensor instance for TYPE_GAME_ROTATION_VECTOR");
                 return OSVR_RETURN_FAILURE;
             }
 
             // Create a default event queue
             ASensorEventQueue *sensorEventQueue = ASensorManager_createEventQueue(sensorManager, looper, 3 /*LOOPER_ID_USER*/, NULL, NULL);
             if (NULL == sensorEventQueue) {
-                std::cout << "[OSVR] Android plugin: Couldn't create a sensor event queue." << std::endl;
+                LOGE("[com_osvr_android_sensorTracker]: Couldn't create a sensor event queue.");
                 return OSVR_RETURN_FAILURE;
             }
 
             if (ASensorEventQueue_enableSensor(sensorEventQueue, sensor) < 0) {
-                std::cout << "[OSVR] Android plugin: Couldn't enable the game rotation vector sensor." << std::endl;
+                LOGE("[com_osvr_android_sensorTracker]: Couldn't enable the game rotation vector sensor.");
                 return OSVR_RETURN_FAILURE;
             }
 
@@ -189,11 +192,11 @@ namespace {
 
             // desired event rate
             if (ASensorEventQueue_setEventRate(sensorEventQueue, sensor, minSensorDelay) < 0) {
-                std::cout << "[OSVR] Android plugin: Couldn't set the event rate." << std::endl;
+                LOGI("[com_osvr_android_sensorTracker]: Couldn't set the event rate.");
                 // this probably isn't fatal. We'll just let it send us events as often as it wants
             }
 
-            std::cout << "[OSVR] Android plugin: sensor tracker plugin enabled!" << std::endl;
+            LOGI("[com_osvr_android_sensorTracker]: sensor tracker plugin enabled!");
 
             /// Create our device object
             osvr::pluginkit::registerObjectForDeletion(ctx,
@@ -208,6 +211,7 @@ namespace {
 } // namespace
 
 OSVR_PLUGIN(com_osvr_android_sensorTracker) {
+    LOGI("[com_osvr_android_sensorTracker]: Entry point executed!");
     osvr::pluginkit::PluginContext context(ctx);
 
     /// Register a detection callback function object.
