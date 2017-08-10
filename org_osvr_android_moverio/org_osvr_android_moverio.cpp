@@ -1,7 +1,7 @@
 /** @file
     @brief Android sensor based tracker plugin, currently supporting orientation only.
 
-    @date 2015
+    @date 2017
 
     @author
     Sensics, Inc.
@@ -22,26 +22,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Android includes
-#include <android/sensor.h>
-#include <cmath>
-
-//#include <android_native_app_glue.h>
-
 // Internal Includes
 #include <osvr/PluginKit/PluginKit.h>
 #include <osvr/PluginKit/TrackerInterfaceC.h>
 
 // Generated JSON header file
-#include "com_osvr_android_sensorTracker_json.h"
+#include "org_osvr_android_moverio_json.h"
 
 // Library/third-party includes
+#include <android/sensor.h>
 #include <android/log.h>
 
 // Standard includes
 #include <iostream>
+#include <cmath>
 
-#define  LOG_TAG    "libgl2jni"
+#define  LOG_TAG    "org_osvr_android_moverio"
 #define  LOGI(...)  __android_log_print(ANDROID_LOG_INFO,LOG_TAG,__VA_ARGS__)
 #define  LOGE(...)  __android_log_print(ANDROID_LOG_ERROR,LOG_TAG,__VA_ARGS__)
 
@@ -50,9 +46,9 @@ namespace {
     static const int TYPE_GAME_ROTATION_VECTOR = 15;
     static const int TYPE_ROTATION_VECTOR = 11;
 
-    class AndroidSensorTrackerDevice {
+    class MoverioTrackerDevice {
     public:
-        AndroidSensorTrackerDevice(OSVR_PluginRegContext ctx,
+        MoverioTrackerDevice(OSVR_PluginRegContext ctx,
             ALooper *looper, ASensorManager *sensorManager, const ASensor *sensor, ASensorEventQueue *sensorEventQueue)
             : m_looper(looper), m_sensorManager(sensorManager), m_sensor(sensor), m_sensorEventQueue(sensorEventQueue)
         {
@@ -66,18 +62,18 @@ namespace {
             osvrDeviceTrackerConfigure(opts, &m_tracker);
 
             /// Create the sync device token with the options
-            m_dev.initSync(ctx, "AndroidSensorTracker", opts);
+            m_dev.initSync(ctx, "MoverioTracker", opts);
 
             /// Send JSON descriptor
-            m_dev.sendJsonDescriptor(com_osvr_android_sensorTracker_json);
+            m_dev.sendJsonDescriptor(org_osvr_android_moverio_json);
 
             /// Register update callback
             m_dev.registerUpdateCallback(this);
         }
 
-        ~AndroidSensorTrackerDevice() {
+        ~MoverioTrackerDevice() {
             if(ASensorManager_destroyEventQueue(m_sensorManager, m_sensorEventQueue) < 0) {
-              LOGI("[com_osvr_android_sensorTracker]: Android sensor tracker - Could not destroy sensor event queue.");
+              LOGI("[org_osvr_android_moverio]: Could not destroy sensor event queue.");
             }
         }
 
@@ -90,10 +86,16 @@ namespace {
                     // the rotation vector from the world coordinate system to OSVR.
                     
                     //int64_t timestamp = e.timestamp;
-                    float x2 = -e.data[1];
-                    float y2 = e.data[0];
+                    // float x2 = -e.data[1];
+                    // float y2 = e.data[0];
+                    // float z2 = e.data[2];
+                    // float w2 = e.data[3];
+
+                    float x2 = e.data[0];
+                    float y2 = e.data[1];
                     float z2 = e.data[2];
                     float w2 = e.data[3];
+
                     // Added in SDK Level 18. Might use it for custom filtering?
                     // float estimatedHeadingAccuracy = e.data[4]; // in radians
 
@@ -124,6 +126,11 @@ namespace {
                     osvrQuatSetY(&orientation, fy);
                     osvrQuatSetZ(&orientation, fz);
 
+                    // osvrQuatSetW(&orientation, w2);
+                    // osvrQuatSetX(&orientation, x2);
+                    // osvrQuatSetY(&orientation, y2);
+                    // osvrQuatSetZ(&orientation, z2);
+
                     // @todo look into whether we can convert/use the timestamp
                     // from the sensor event. For now, just let osvr use the
                     // current time.
@@ -147,41 +154,41 @@ namespace {
         HardwareDetection() {}
         OSVR_ReturnCode operator()(OSVR_PluginRegContext ctx) {
 
-            LOGI("[com_osvr_android_sensorTracker]: Got a hardware detection request");
+            LOGI("[org_osvr_android_moverio]: Got a hardware detection request");
             // Get the ALooper for the current thread
             ALooper* looper = ALooper_prepare(0);
             if (NULL == looper) {
-                LOGE("[com_osvr_android_sensorTracker]: There is no ALooper instance for the current thread. Can't get sensor data without one.");
+                LOGE("[org_osvr_android_moverio]: There is no ALooper instance for the current thread. Can't get sensor data without one.");
                 return OSVR_RETURN_FAILURE;
             }
 
             // The sensor manager is a singleton
             ASensorManager* sensorManager = ASensorManager_getInstance();
             if (NULL == sensorManager) {
-                LOGE("[com_osvr_android_sensorTracker]: Couldn't get the ASensorManager for this thread.");
+                LOGE("[org_osvr_android_moverio]: Couldn't get the ASensorManager for this thread.");
                 return OSVR_RETURN_FAILURE;
             }
 
             // get the default Accelerometer sensor and enable it
             const ASensor* sensor = ASensorManager_getDefaultSensor(sensorManager, TYPE_GAME_ROTATION_VECTOR);
             if(NULL == sensor) {
-                LOGI("[com_osvr_android_sensorTracker]: Couldn't get the TYPE_GAME_ROTATION_VECTOR, trying for TYPE_ROTATION_VECTOR");
+                LOGI("[org_osvr_android_moverio]: Couldn't get the TYPE_GAME_ROTATION_VECTOR, trying for TYPE_ROTATION_VECTOR");
                 sensor = ASensorManager_getDefaultSensor(sensorManager, TYPE_ROTATION_VECTOR);
             }
             if (NULL == sensor) {
-                LOGE("[com_osvr_android_sensorTracker]: Couldn't get the default ASensor instance for TYPE_GAME_ROTATION_VECTOR");
+                LOGE("[org_osvr_android_moverio]: Couldn't get the default ASensor instance for TYPE_GAME_ROTATION_VECTOR");
                 return OSVR_RETURN_FAILURE;
             }
 
             // Create a default event queue
             ASensorEventQueue *sensorEventQueue = ASensorManager_createEventQueue(sensorManager, looper, 3 /*LOOPER_ID_USER*/, NULL, NULL);
             if (NULL == sensorEventQueue) {
-                LOGE("[com_osvr_android_sensorTracker]: Couldn't create a sensor event queue.");
+                LOGE("[org_osvr_android_moverio]: Couldn't create a sensor event queue.");
                 return OSVR_RETURN_FAILURE;
             }
 
             if (ASensorEventQueue_enableSensor(sensorEventQueue, sensor) < 0) {
-                LOGE("[com_osvr_android_sensorTracker]: Couldn't enable the game rotation vector sensor.");
+                LOGE("[org_osvr_android_moverio]: Couldn't enable the game rotation vector sensor.");
                 return OSVR_RETURN_FAILURE;
             }
 
@@ -189,25 +196,25 @@ namespace {
             // the minimum sensor delay.
             int minSensorDelay = ASensor_getMinDelay(sensor);
             if(minSensorDelay == 0) {
-                LOGI("[com_osvr_android_sensorTracker]: Sensor reports continuously. Setting event rate to 100Hz");
+                LOGI("[org_osvr_android_moverio]: Sensor reports continuously. Setting event rate to 100Hz");
               // the sensor reports continuously, not at a fixed rate
               // so just set the event rate to 100Hz
               minSensorDelay = 100000;
             }
 
-            LOGI("[com_osvr_android_sensorTracker]: Setting sensor event rate to %d", minSensorDelay);
+            LOGI("[org_osvr_android_moverio]: Setting sensor event rate to %d", minSensorDelay);
 
             // desired event rate
             if (ASensorEventQueue_setEventRate(sensorEventQueue, sensor, minSensorDelay) < 0) {
-                LOGI("[com_osvr_android_sensorTracker]: Couldn't set the event rate.");
+                LOGI("[org_osvr_android_moverio]: Couldn't set the event rate.");
                 // this probably isn't fatal. We'll just let it send us events as often as it wants
             }
 
-            LOGI("[com_osvr_android_sensorTracker]: sensor tracker plugin enabled!");
+            LOGI("[org_osvr_android_moverio]: sensor tracker plugin enabled!");
 
             /// Create our device object
             osvr::pluginkit::registerObjectForDeletion(ctx,
-                new AndroidSensorTrackerDevice(ctx, looper, sensorManager, sensor, sensorEventQueue));
+                new MoverioTrackerDevice(ctx, looper, sensorManager, sensor, sensorEventQueue));
 
             return OSVR_RETURN_SUCCESS;
         }
@@ -217,8 +224,8 @@ namespace {
     };
 } // namespace
 
-OSVR_PLUGIN(com_osvr_android_sensorTracker) {
-    LOGI("[com_osvr_android_sensorTracker]: Entry point executed!");
+OSVR_PLUGIN(org_osvr_android_moverio) {
+    LOGI("[org_osvr_android_moverio]: Entry point executed!");
     osvr::pluginkit::PluginContext context(ctx);
 
     /// Register a detection callback function object.
