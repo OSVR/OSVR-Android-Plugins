@@ -46,11 +46,86 @@ namespace {
     static const int TYPE_GAME_ROTATION_VECTOR = 15;
     static const int TYPE_ROTATION_VECTOR = 11;
 
+    // Moverio specific sensor types
+    static const int TYPE_HEADSET_TAP = 0x00002001;
+    static const int TYPE_CONTROLLER_ROTATION_VECTOR = 0x0010000b;
+
+    // OSVR tracker channels
+    static const int MOVERIO_TRACKER_CHANNEL_HEAD = 0;
+    static const int MOVERIO_TRACKER_CHANNEL_CONTROLLER = 1;
+
+    static bool ASensorEventToOSVR_OrientationState(const ASensorEvent* e, OSVR_OrientationState& orientationOut) {
+        if(!e) {
+            LOGE("[org_osvr_android_moverio]: ASensorEventToOSVR_OrientationState - Expecting a non-NULL ASensorEvent.");
+            return false;
+        }
+        if (e->type == TYPE_GAME_ROTATION_VECTOR ||
+            e->type == TYPE_ROTATION_VECTOR ||
+            e->type == TYPE_CONTROLLER_ROTATION_VECTOR) {
+            // if things look weird (like swapping x and y), it's because we're transforming
+            // the rotation vector from the world coordinate system to OSVR.
+            
+            //int64_t timestamp = e.timestamp;
+            // float x2 = -e.data[1];
+            // float y2 = e.data[0];
+            // float z2 = e.data[2];
+            // float w2 = e.data[3];
+
+            float x2 = e->data[0];
+            float y2 = e->data[1];
+            float z2 = e->data[2];
+            float w2 = e->data[3];
+
+            // Added in SDK Level 18. Might use it for custom filtering?
+            // float estimatedHeadingAccuracy = e.data[4]; // in radians
+
+            // originally optional prior to SDK Level 18
+            if (w2 < 0.0f) {
+                w2 = std::sqrt(1.0f - (x2 * x2 + y2 * y2 + z2 * z2));
+            }
+            
+            // By default, (w2, x2, y2, z2) points straight down when you're looking ahead,
+            // so rotate it up (negative) by 90 degrees (M_PI_2)
+            float sinRThetaOver2 = std::sin(-M_PI_4);
+            float x1 = sinRThetaOver2;
+            float y1 = 0.0f;
+            float z1 = 0.0f;
+            float w1 = std::cos(M_PI_4);
+            
+            // @todo we may need to renormalize here
+            float fw = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2;
+            float fx = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2;
+            float fy = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2;
+            float fz = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2;
+
+            osvrQuatSetIdentity(&orientationOut);
+
+            osvrQuatSetW(&orientationOut, fw);
+            osvrQuatSetX(&orientationOut, fx);
+            osvrQuatSetY(&orientationOut, fy);
+            osvrQuatSetZ(&orientationOut, fz);
+
+            // osvrQuatSetW(&orientationOut, w2);
+            // osvrQuatSetX(&orientationOut, x2);
+            // osvrQuatSetY(&orientationOut, y2);
+            // osvrQuatSetZ(&orientationOut, z2);
+            return true;
+        }
+        return false;
+    };
+
     class MoverioTrackerDevice {
+    private:
+        osvr::pluginkit::DeviceToken m_dev;
+        OSVR_TrackerDeviceInterface m_tracker;
+        ALooper* m_looper;
+        ASensorManager* m_sensorManager;
+        ASensorEventQueue* m_sensorEventQueue;
+
     public:
         MoverioTrackerDevice(OSVR_PluginRegContext ctx,
-            ALooper *looper, ASensorManager *sensorManager, const ASensor *sensor, ASensorEventQueue *sensorEventQueue)
-            : m_looper(looper), m_sensorManager(sensorManager), m_sensor(sensor), m_sensorEventQueue(sensorEventQueue)
+            ALooper *looper, ASensorManager *sensorManager, ASensorEventQueue *sensorEventQueue)
+            : m_looper(looper), m_sensorManager(sensorManager), m_sensorEventQueue(sensorEventQueue)
         {
             // @todo sanity check for constructor arguments. All ptrs have to
             // be non-null
@@ -81,73 +156,59 @@ namespace {
             ASensorEvent e;
             while (ASensorEventQueue_getEvents(m_sensorEventQueue, &e, 1) > 0)
             {
-                if (e.type == TYPE_GAME_ROTATION_VECTOR || e.type == TYPE_ROTATION_VECTOR) {
-                    // if things look weird (like swapping x and y), it's because we're transforming
-                    // the rotation vector from the world coordinate system to OSVR.
-                    
-                    //int64_t timestamp = e.timestamp;
-                    // float x2 = -e.data[1];
-                    // float y2 = e.data[0];
-                    // float z2 = e.data[2];
-                    // float w2 = e.data[3];
+                OSVR_OrientationState orientation;
+                osvrQuatSetIdentity(&orientation);
 
-                    float x2 = e.data[0];
-                    float y2 = e.data[1];
-                    float z2 = e.data[2];
-                    float w2 = e.data[3];
-
-                    // Added in SDK Level 18. Might use it for custom filtering?
-                    // float estimatedHeadingAccuracy = e.data[4]; // in radians
-
-                    // originally optional prior to SDK Level 18
-                    if (w2 < 0.0f) {
-                        w2 = std::sqrt(1.0f - (x2 * x2 + y2 * y2 + z2 * z2));
+                if(ASensorEventToOSVR_OrientationState(&e, orientation)) {
+                    OSVR_ChannelCount trackerChannel = -1;
+                    switch(e.type) {
+                        case TYPE_GAME_ROTATION_VECTOR:
+                        case TYPE_ROTATION_VECTOR:
+                            trackerChannel = MOVERIO_TRACKER_CHANNEL_HEAD;
+                            break;
+                        case TYPE_CONTROLLER_ROTATION_VECTOR:
+                            trackerChannel = MOVERIO_TRACKER_CHANNEL_CONTROLLER;
+                            break;
+                        default:
+                            LOGE("Unknown ASensorEvent type supported by ASensorEventToOSVR_OrientationState.");
+                            return OSVR_RETURN_FAILURE;
                     }
-                    
-                    // By default, (w2, x2, y2, z2) points straight down when you're looking ahead,
-                    // so rotate it up (negative) by 90 degrees (M_PI_2)
-                    float sinRThetaOver2 = std::sin(-M_PI_4);
-                    float x1 = sinRThetaOver2;
-                    float y1 = 0.0f;
-                    float z1 = 0.0f;
-                    float w1 = std::cos(M_PI_4);
-                    
-                    float fw = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2;
-                    float fx = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2;
-                    float fy = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2;
-                    float fz = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2;
-
-                    // @todo we may need to renormalize here
-
-                    OSVR_OrientationState orientation;
-                    osvrQuatSetIdentity(&orientation);
-                    osvrQuatSetW(&orientation, fw);
-                    osvrQuatSetX(&orientation, fx);
-                    osvrQuatSetY(&orientation, fy);
-                    osvrQuatSetZ(&orientation, fz);
-
-                    // osvrQuatSetW(&orientation, w2);
-                    // osvrQuatSetX(&orientation, x2);
-                    // osvrQuatSetY(&orientation, y2);
-                    // osvrQuatSetZ(&orientation, z2);
-
                     // @todo look into whether we can convert/use the timestamp
                     // from the sensor event. For now, just let osvr use the
                     // current time.
-                    osvrDeviceTrackerSendOrientation(m_dev, m_tracker, &orientation, 0);
+                    osvrDeviceTrackerSendOrientation(m_dev, m_tracker, &orientation, trackerChannel);
                 }
             }
             return OSVR_RETURN_SUCCESS;
         }
-
-    private:
-        osvr::pluginkit::DeviceToken m_dev;
-        OSVR_TrackerDeviceInterface m_tracker;
-        ALooper* m_looper;
-        ASensorManager* m_sensorManager;
-        const ASensor* m_sensor;
-        ASensorEventQueue* m_sensorEventQueue;
     };
+
+    // Enable a sensor and set its event rate, ensuring event rate is set to fastest available
+    static bool enableSensorAndSetEventRate(const ASensor* sensor, ASensorEventQueue* sensorEventQueue) {
+        if (ASensorEventQueue_enableSensor(sensorEventQueue, sensor) < 0) {
+            LOGE("[org_osvr_android_moverio]: Couldn't enable the game rotation vector sensor.");
+            return false;
+        }
+
+        // it's an error to set the desired event rate to something less than
+        // the minimum sensor delay.
+        int minSensorDelay = ASensor_getMinDelay(sensor);
+        if(minSensorDelay == 0) {
+            LOGI("[org_osvr_android_moverio]: Sensor reports continuously. Setting event rate to 100Hz");
+            // the sensor reports continuously, not at a fixed rate
+            // so just set the event rate to 100Hz
+            minSensorDelay = 100000;
+        }
+
+        LOGI("[org_osvr_android_moverio]: Setting sensor event rate to %d", minSensorDelay);
+
+        // desired event rate
+        if (ASensorEventQueue_setEventRate(sensorEventQueue, sensor, minSensorDelay) < 0) {
+            LOGI("[org_osvr_android_moverio]: Couldn't set the event rate.");
+            // this probably isn't fatal. We'll just let it send us events as often as it wants
+        }
+        return true;
+    }
 
     class HardwareDetection {
     public:
@@ -170,13 +231,21 @@ namespace {
             }
 
             // get the default Accelerometer sensor and enable it
-            const ASensor* sensor = ASensorManager_getDefaultSensor(sensorManager, TYPE_GAME_ROTATION_VECTOR);
-            if(NULL == sensor) {
+            const ASensor* headSensor = ASensorManager_getDefaultSensor(sensorManager, TYPE_GAME_ROTATION_VECTOR);
+            if(NULL == headSensor) {
                 LOGI("[org_osvr_android_moverio]: Couldn't get the TYPE_GAME_ROTATION_VECTOR, trying for TYPE_ROTATION_VECTOR");
-                sensor = ASensorManager_getDefaultSensor(sensorManager, TYPE_ROTATION_VECTOR);
+                headSensor = ASensorManager_getDefaultSensor(sensorManager, TYPE_ROTATION_VECTOR);
             }
-            if (NULL == sensor) {
+
+            if (NULL == headSensor) {
                 LOGE("[org_osvr_android_moverio]: Couldn't get the default ASensor instance for TYPE_GAME_ROTATION_VECTOR");
+                return OSVR_RETURN_FAILURE;
+            }
+
+            // get the controller sensor and enable it
+            const ASensor* controllerSensor = ASensorManager_getDefaultSensor(sensorManager, TYPE_CONTROLLER_ROTATION_VECTOR);
+            if (NULL == controllerSensor) {
+                LOGE("[org_osvr_android_moverio]: Couldn't get the default ASensor instance for TYPE_CONTROLLER_ROTATION_VECTOR");
                 return OSVR_RETURN_FAILURE;
             }
 
@@ -187,34 +256,21 @@ namespace {
                 return OSVR_RETURN_FAILURE;
             }
 
-            if (ASensorEventQueue_enableSensor(sensorEventQueue, sensor) < 0) {
-                LOGE("[org_osvr_android_moverio]: Couldn't enable the game rotation vector sensor.");
+            if(!enableSensorAndSetEventRate(headSensor, sensorEventQueue)) {
+                LOGE("[org_osvr_android_moverio]: Failure while enabling the head sensor and setting its event rate");
                 return OSVR_RETURN_FAILURE;
             }
 
-            // it's an error to set the desired event rate to something less than
-            // the minimum sensor delay.
-            int minSensorDelay = ASensor_getMinDelay(sensor);
-            if(minSensorDelay == 0) {
-                LOGI("[org_osvr_android_moverio]: Sensor reports continuously. Setting event rate to 100Hz");
-              // the sensor reports continuously, not at a fixed rate
-              // so just set the event rate to 100Hz
-              minSensorDelay = 100000;
-            }
-
-            LOGI("[org_osvr_android_moverio]: Setting sensor event rate to %d", minSensorDelay);
-
-            // desired event rate
-            if (ASensorEventQueue_setEventRate(sensorEventQueue, sensor, minSensorDelay) < 0) {
-                LOGI("[org_osvr_android_moverio]: Couldn't set the event rate.");
-                // this probably isn't fatal. We'll just let it send us events as often as it wants
+            if(!enableSensorAndSetEventRate(controllerSensor, sensorEventQueue)) {
+                LOGE("[org_osvr_android_moverio]: Failure while enabling the controller sensor and setting its event rate");
+                return OSVR_RETURN_FAILURE;
             }
 
             LOGI("[org_osvr_android_moverio]: sensor tracker plugin enabled!");
 
             /// Create our device object
             osvr::pluginkit::registerObjectForDeletion(ctx,
-                new MoverioTrackerDevice(ctx, looper, sensorManager, sensor, sensorEventQueue));
+                new MoverioTrackerDevice(ctx, looper, sensorManager, sensorEventQueue));
 
             return OSVR_RETURN_SUCCESS;
         }
