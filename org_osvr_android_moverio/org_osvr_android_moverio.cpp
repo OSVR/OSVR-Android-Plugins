@@ -25,6 +25,7 @@
 // Internal Includes
 #include <osvr/PluginKit/PluginKit.h>
 #include <osvr/PluginKit/TrackerInterfaceC.h>
+#include <osvr/PluginKit/ButtonInterfaceC.h>
 
 // Generated JSON header file
 #include "org_osvr_android_moverio_json.h"
@@ -43,6 +44,7 @@
 
 // Anonymous namespace to avoid symbol collision
 namespace {
+    // Android standard sensor types @todo are these defined in a header somewhere?
     static const int TYPE_GAME_ROTATION_VECTOR = 15;
     static const int TYPE_ROTATION_VECTOR = 11;
 
@@ -51,8 +53,13 @@ namespace {
     static const int TYPE_CONTROLLER_ROTATION_VECTOR = 0x0010000b;
 
     // OSVR tracker channels
-    static const int MOVERIO_TRACKER_CHANNEL_HEAD = 0;
-    static const int MOVERIO_TRACKER_CHANNEL_CONTROLLER = 1;
+    static const OSVR_ChannelCount MOVERIO_NUM_TRACKER_CHANNELS = 2;
+    static const OSVR_ChannelCount MOVERIO_TRACKER_CHANNEL_HEAD = 0;
+    static const OSVR_ChannelCount MOVERIO_TRACKER_CHANNEL_CONTROLLER = 1;
+
+    // other consts
+    static const OSVR_ChannelCount MOVERIO_NUM_BUTTON_CHANNELS = 1;
+    static const OSVR_ChannelCount MOVERIO_BUTTON_CHANNEL_HEADSET_TAP = 0;
 
     static bool ASensorEventToOSVR_OrientationState(const ASensorEvent* e, OSVR_OrientationState& orientationOut) {
         if(!e) {
@@ -118,6 +125,7 @@ namespace {
     private:
         osvr::pluginkit::DeviceToken m_dev;
         OSVR_TrackerDeviceInterface m_tracker;
+        OSVR_ButtonDeviceInterface m_button;
         ALooper* m_looper;
         ASensorManager* m_sensorManager;
         ASensorEventQueue* m_sensorEventQueue;
@@ -133,8 +141,11 @@ namespace {
             /// Create the initialization options
             OSVR_DeviceInitOptions opts = osvrDeviceCreateInitOptions(ctx);
 
-            /// Indicate that we'll want 1 analog channel.
+            /// Configure the tracker interfaces
             osvrDeviceTrackerConfigure(opts, &m_tracker);
+
+            /// Configure the button interfaces
+            osvrDeviceButtonConfigure(opts, &m_button, MOVERIO_NUM_BUTTON_CHANNELS);
 
             /// Create the sync device token with the options
             m_dev.initSync(ctx, "MoverioTracker", opts);
@@ -156,27 +167,53 @@ namespace {
             ASensorEvent e;
             while (ASensorEventQueue_getEvents(m_sensorEventQueue, &e, 1) > 0)
             {
-                OSVR_OrientationState orientation;
-                osvrQuatSetIdentity(&orientation);
+                switch(e.type) {
+                    case TYPE_GAME_ROTATION_VECTOR:
+                    case TYPE_ROTATION_VECTOR:
+                    case TYPE_CONTROLLER_ROTATION_VECTOR:
+                    {
+                        OSVR_OrientationState orientation;
+                        osvrQuatSetIdentity(&orientation);
 
-                if(ASensorEventToOSVR_OrientationState(&e, orientation)) {
-                    OSVR_ChannelCount trackerChannel = -1;
-                    switch(e.type) {
-                        case TYPE_GAME_ROTATION_VECTOR:
-                        case TYPE_ROTATION_VECTOR:
-                            trackerChannel = MOVERIO_TRACKER_CHANNEL_HEAD;
-                            break;
-                        case TYPE_CONTROLLER_ROTATION_VECTOR:
-                            trackerChannel = MOVERIO_TRACKER_CHANNEL_CONTROLLER;
-                            break;
-                        default:
-                            LOGE("Unknown ASensorEvent type supported by ASensorEventToOSVR_OrientationState.");
-                            return OSVR_RETURN_FAILURE;
-                    }
-                    // @todo look into whether we can convert/use the timestamp
-                    // from the sensor event. For now, just let osvr use the
-                    // current time.
-                    osvrDeviceTrackerSendOrientation(m_dev, m_tracker, &orientation, trackerChannel);
+                        if(ASensorEventToOSVR_OrientationState(&e, orientation)) {
+                            OSVR_ChannelCount trackerChannel = -1;
+                            switch(e.type) {
+                                case TYPE_GAME_ROTATION_VECTOR:
+                                case TYPE_ROTATION_VECTOR:
+                                    trackerChannel = MOVERIO_TRACKER_CHANNEL_HEAD;
+                                    break;
+                                case TYPE_CONTROLLER_ROTATION_VECTOR:
+                                    trackerChannel = MOVERIO_TRACKER_CHANNEL_CONTROLLER;
+                                    break;
+                                default:
+                                    LOGE("[org_osvr_android_moverio]: Unknown ASensorEvent type supported by ASensorEventToOSVR_OrientationState.");
+                                    return OSVR_RETURN_FAILURE;
+                            }
+                            // @todo look into whether we can convert/use the timestamp
+                            // from the sensor event. For now, just let osvr use the
+                            // current time.
+                            if(OSVR_RETURN_SUCCESS !=
+                                osvrDeviceTrackerSendOrientation(m_dev, m_tracker, &orientation, trackerChannel)) {
+                                LOGE("[org_osvr_android_moverio]: Failed to send tracker orientation.");
+                            }
+                        }
+                    } break;
+                    case TYPE_HEADSET_TAP:
+                    {
+                        float value = e.data[0];
+                        LOGI("[org_osvr_android_moverio]: TYPE_HEADSET_TAP, e.data[0] == %f", value);
+                        OSVR_ButtonState buttonState =
+                            (value != 0.0f ? OSVR_BUTTON_PRESSED : OSVR_BUTTON_NOT_PRESSED);
+                        
+                        if(OSVR_RETURN_SUCCESS !=
+                                osvrDeviceButtonSetValue(
+                                    m_dev, m_button, buttonState, MOVERIO_BUTTON_CHANNEL_HEADSET_TAP)) {
+                            LOGE("[org_osvr_android_moverio]: Failed to send button state.");
+                        }
+                    } break;
+                    default:
+                        // not an error and doesn't need to be logged.
+                        break;
                 }
             }
             return OSVR_RETURN_SUCCESS;
@@ -249,6 +286,13 @@ namespace {
                 return OSVR_RETURN_FAILURE;
             }
 
+            // tap sensor
+            const ASensor* tapSensor = ASensorManager_getDefaultSensor(sensorManager, TYPE_HEADSET_TAP);
+            if (NULL == controllerSensor) {
+                LOGE("[org_osvr_android_moverio]: Couldn't get the default ASensor instance for TYPE_HEADSET_TAP");
+                return OSVR_RETURN_FAILURE;
+            }
+
             // Create a default event queue
             ASensorEventQueue *sensorEventQueue = ASensorManager_createEventQueue(sensorManager, looper, 3 /*LOOPER_ID_USER*/, NULL, NULL);
             if (NULL == sensorEventQueue) {
@@ -263,6 +307,11 @@ namespace {
 
             if(!enableSensorAndSetEventRate(controllerSensor, sensorEventQueue)) {
                 LOGE("[org_osvr_android_moverio]: Failure while enabling the controller sensor and setting its event rate");
+                return OSVR_RETURN_FAILURE;
+            }
+
+            if(!enableSensorAndSetEventRate(tapSensor, sensorEventQueue)) {
+                LOGE("[org_osvr_android_moverio]: Failure while enabling the headset tap sensor and settings its event rate");
                 return OSVR_RETURN_FAILURE;
             }
 

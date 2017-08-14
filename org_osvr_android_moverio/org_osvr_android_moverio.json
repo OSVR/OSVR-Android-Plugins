@@ -10,10 +10,16 @@
       "bounded": true,
       "position": false,
       "orientation": true
+    },
+    "button": {
+      "count": 1
     }
   },
   "semantic": {
-    "hmd": "tracker/0",
+    "hmd": {
+      "$target": "tracker/0",
+      "button": "button/0"
+    },
     "controller": "tracker/1"
   },
   "automaticAliases": {
