@@ -37,6 +37,11 @@
 // Standard includes
 #include <iostream>
 #include <cmath>
+#include <chrono>
+#include <mutex>
+#include <thread>
+#include <queue>
+#include <utility>
 
 #define  LOG_TAG    "org_osvr_android_moverio"
 #define  LOGI(...)  __android_log_print(ANDROID_LOG_INFO,LOG_TAG,__VA_ARGS__)
@@ -121,19 +126,258 @@ namespace {
         return false;
     };
 
+    class ASensorThread {
+    private:
+        std::thread mThread;
+
+        // These variables, asside from mMutex, are synchronized,
+        // so use a std::lock_guard on mMutex to read/write
+        std::mutex mMutex;
+        bool mQuitSignalSynced = false;
+        bool mDeviceActiveSynced = false;
+        std::queue<std::pair<OSVR_OrientationState, OSVR_TimeValue> > mHeadStateQueueSynced;
+        std::queue<std::pair<OSVR_OrientationState, OSVR_TimeValue> > mBaseStationStateQueueSynced;
+        std::queue<std::pair<OSVR_ButtonState, OSVR_TimeValue> > mHeadTapStateQueueSynced;
+        ASensorManager* mSensorManagerSynced = nullptr;
+        ASensorEventQueue* mSensorEventQueueSynced = nullptr;
+
+        // Enable a sensor and set its event rate, ensuring event rate is set to fastest available
+        static bool enableSensorAndSetEventRate(const ASensor* sensor, ASensorEventQueue* sensorEventQueue) {
+            if (ASensorEventQueue_enableSensor(sensorEventQueue, sensor) < 0) {
+                LOGE("[org_osvr_android_moverio]: Couldn't enable the game rotation vector sensor.");
+                return false;
+            }
+
+            // it's an error to set the desired event rate to something less than
+            // the minimum sensor delay.
+            int minSensorDelay = ASensor_getMinDelay(sensor);
+            if(minSensorDelay == 0) {
+                LOGI("[org_osvr_android_moverio]: Sensor reports continuously. Setting event rate to 100Hz");
+                // the sensor reports continuously, not at a fixed rate
+                // so just set the event rate to 100Hz
+                minSensorDelay = 100000;
+            }
+
+            LOGI("[org_osvr_android_moverio]: Setting sensor event rate to %d", minSensorDelay);
+
+            // desired event rate
+            if (ASensorEventQueue_setEventRate(sensorEventQueue, sensor, minSensorDelay) < 0) {
+                LOGI("[org_osvr_android_moverio]: Couldn't set the event rate.");
+                // this probably isn't fatal. We'll just let it send us events as often as it wants
+            }
+            return true;
+        }
+
+        void run() {
+            LOGI("[org_osvr_android_moverio]: Got a hardware detection request");
+            // Get the ALooper for the current thread
+            ALooper* looper = ALooper_prepare(0);
+            if (NULL == looper) {
+                LOGE("[org_osvr_android_moverio]: There is no ALooper instance for the current thread. Can't get sensor data without one.");
+                return;
+            }
+
+            // lock_guard block
+            {
+                std::lock_guard<std::mutex> lock(mMutex);
+                // The sensor manager is a singleton
+                mSensorManagerSynced = ASensorManager_getInstance();
+                if (NULL == mSensorManagerSynced) {
+                    LOGE("[org_osvr_android_moverio]: Couldn't get the ASensorManager for this thread.");
+                    return;
+                }
+
+                // get the default Accelerometer sensor and enable it
+                const ASensor* headSensor = ASensorManager_getDefaultSensor(mSensorManagerSynced, TYPE_GAME_ROTATION_VECTOR);
+                if(NULL == headSensor) {
+                    LOGI("[org_osvr_android_moverio]: Couldn't get the TYPE_GAME_ROTATION_VECTOR, trying for TYPE_ROTATION_VECTOR");
+                    headSensor = ASensorManager_getDefaultSensor(mSensorManagerSynced, TYPE_ROTATION_VECTOR);
+                }
+
+                if (NULL == headSensor) {
+                    LOGE("[org_osvr_android_moverio]: Couldn't get the default ASensor instance for TYPE_GAME_ROTATION_VECTOR");
+                    return;
+                }
+
+                // get the controller sensor and enable it
+                const ASensor* controllerSensor = ASensorManager_getDefaultSensor(mSensorManagerSynced, TYPE_CONTROLLER_ROTATION_VECTOR);
+                if (NULL == controllerSensor) {
+                    LOGE("[org_osvr_android_moverio]: Couldn't get the default ASensor instance for TYPE_CONTROLLER_ROTATION_VECTOR");
+                    return;
+                }
+
+                // tap sensor
+                const ASensor* tapSensor = ASensorManager_getDefaultSensor(mSensorManagerSynced, TYPE_HEADSET_TAP);
+                if (NULL == controllerSensor) {
+                    LOGE("[org_osvr_android_moverio]: Couldn't get the default ASensor instance for TYPE_HEADSET_TAP");
+                    return;
+                }
+
+                // Create a default event queue
+                mSensorEventQueueSynced = ASensorManager_createEventQueue(mSensorManagerSynced, looper, 3 /*LOOPER_ID_USER*/, NULL, NULL);
+                if (NULL == mSensorEventQueueSynced) {
+                    LOGE("[org_osvr_android_moverio]: Couldn't create a sensor event queue.");
+                    return;
+                }
+
+                if(!enableSensorAndSetEventRate(headSensor, mSensorEventQueueSynced)) {
+                    LOGE("[org_osvr_android_moverio]: Failure while enabling the head sensor and setting its event rate");
+                    return;
+                }
+
+                if(!enableSensorAndSetEventRate(controllerSensor, mSensorEventQueueSynced)) {
+                    LOGE("[org_osvr_android_moverio]: Failure while enabling the controller sensor and setting its event rate");
+                    return;
+                }
+
+                if(!enableSensorAndSetEventRate(tapSensor, mSensorEventQueueSynced)) {
+                    LOGE("[org_osvr_android_moverio]: Failure while enabling the headset tap sensor and settings its event rate");
+                    return;
+                }
+            } // end lock_guard(mMutex) block
+
+            while(true) {
+                std::lock_guard<std::mutex> lock(mMutex);
+
+                // assume active if we get there
+                mDeviceActiveSynced = true;
+                if(mQuitSignalSynced) {
+                    return;
+                }
+                ASensorEvent e;
+                while (ASensorEventQueue_getEvents(mSensorEventQueueSynced, &e, 1) > 0)
+                {
+                    OSVR_TimeValue nowTimeValue;
+                    osvrTimeValueGetNow(&nowTimeValue);
+
+                    switch(e.type) {
+                        case TYPE_GAME_ROTATION_VECTOR:
+                        case TYPE_ROTATION_VECTOR:
+                        case TYPE_CONTROLLER_ROTATION_VECTOR:
+                        {
+                            OSVR_OrientationState orientation;
+                            osvrQuatSetIdentity(&orientation);
+    
+                            if(ASensorEventToOSVR_OrientationState(&e, orientation)) {
+                                switch(e.type) {
+                                    case TYPE_GAME_ROTATION_VECTOR:
+                                    case TYPE_ROTATION_VECTOR:
+                                        mHeadStateQueueSynced.push(std::make_pair(orientation, nowTimeValue));
+                                        break;
+                                    case TYPE_CONTROLLER_ROTATION_VECTOR:
+                                        mBaseStationStateQueueSynced.push(std::make_pair(orientation, nowTimeValue));
+                                        break;
+                                    default:
+                                        LOGE("[org_osvr_android_moverio]: Unknown ASensorEvent type supported by ASensorEventToOSVR_OrientationState.");
+										break;
+                                }
+                            }
+                        } break;
+                        case TYPE_HEADSET_TAP:
+                        {
+                            float value = e.data[0];
+                            LOGI("[org_osvr_android_moverio]: TYPE_HEADSET_TAP, e.data[0] == %f", value);
+                            OSVR_ButtonState buttonState =
+                                (value != 0.0f ? OSVR_BUTTON_PRESSED : OSVR_BUTTON_NOT_PRESSED);
+                            
+                            mHeadTapStateQueueSynced.push(std::make_pair(buttonState, nowTimeValue));
+                        } break;
+                        default:
+                            // not an error and doesn't need to be logged.
+                            break;
+                    }
+                }
+            }
+        }
+
+    public:
+        ASensorThread()
+        : mThread(&ASensorThread::run, this) {
+
+        }
+
+        ~ASensorThread() {
+            waitForThreadComplete();
+            // no need for lock_guard, thread is finished
+            if(ASensorManager_destroyEventQueue(mSensorManagerSynced, mSensorEventQueueSynced) < 0) {
+                LOGI("[org_osvr_android_moverio]: Could not destroy sensor event queue.");
+              }
+        }
+
+        void signalStop() {
+            std::lock_guard<std::mutex> lock(mMutex);
+			mQuitSignalSynced = true;
+        }
+
+        void waitForThreadComplete() {
+            signalStop();
+            mThread.join();
+        }
+
+        bool isDeviceActive() {
+            std::lock_guard<std::mutex> lock(mMutex);
+            return mDeviceActiveSynced;
+        }
+
+        OSVR_ReturnCode reportQueuedState(
+            osvr::pluginkit::DeviceToken dev,
+            OSVR_TrackerDeviceInterface tracker,
+            OSVR_ButtonDeviceInterface button) {
+
+            std::lock_guard<std::mutex> lock(mMutex);
+
+            // Tracker interface
+
+            // Head
+            while(!mHeadStateQueueSynced.empty()) {
+                auto trackerReport = mHeadStateQueueSynced.front();
+                mHeadStateQueueSynced.pop();
+                if(OSVR_RETURN_SUCCESS !=
+                    osvrDeviceTrackerSendOrientationTimestamped(
+                        dev, tracker, &trackerReport.first, MOVERIO_TRACKER_CHANNEL_HEAD, &trackerReport.second)) {
+                    LOGE("[org_osvr_android_moverio]: Failed to send tracker orientation.");
+                    return OSVR_RETURN_FAILURE;
+                }
+            }
+
+            // Base station
+            while(!mHeadStateQueueSynced.empty()) {
+                auto trackerReport = mHeadStateQueueSynced.front();
+                mHeadStateQueueSynced.pop();
+                if(OSVR_RETURN_SUCCESS !=
+                    osvrDeviceTrackerSendOrientationTimestamped(
+                        dev, tracker, &trackerReport.first, MOVERIO_TRACKER_CHANNEL_CONTROLLER, &trackerReport.second)) {
+                    LOGE("[org_osvr_android_moverio]: Failed to send tracker orientation.");
+                    return OSVR_RETURN_FAILURE;
+                }
+            }
+
+            // Button interface
+
+            // Tap button
+            while(!mHeadTapStateQueueSynced.empty()) {
+                auto buttonReport = mHeadTapStateQueueSynced.front();
+                mHeadTapStateQueueSynced.pop();
+                if(OSVR_RETURN_SUCCESS !=
+                    osvrDeviceButtonSetValueTimestamped(
+                            dev, button, buttonReport.first, MOVERIO_BUTTON_CHANNEL_HEADSET_TAP, &buttonReport.second)) {
+                    LOGE("[org_osvr_android_moverio]: Failed to send button state.");
+                    return OSVR_RETURN_FAILURE;
+                }
+            }
+        }
+    };
+
     class MoverioTrackerDevice {
     private:
         osvr::pluginkit::DeviceToken m_dev;
         OSVR_TrackerDeviceInterface m_tracker;
         OSVR_ButtonDeviceInterface m_button;
-        ALooper* m_looper;
-        ASensorManager* m_sensorManager;
-        ASensorEventQueue* m_sensorEventQueue;
+        std::shared_ptr<ASensorThread> m_sensorThread;
 
     public:
-        MoverioTrackerDevice(OSVR_PluginRegContext ctx,
-            ALooper *looper, ASensorManager *sensorManager, ASensorEventQueue *sensorEventQueue)
-            : m_looper(looper), m_sensorManager(sensorManager), m_sensorEventQueue(sensorEventQueue)
+        MoverioTrackerDevice(OSVR_PluginRegContext ctx, std::shared_ptr<ASensorThread> sensorThread)
+            : m_sensorThread(sensorThread)
         {
             // @todo sanity check for constructor arguments. All ptrs have to
             // be non-null
@@ -158,174 +402,40 @@ namespace {
         }
 
         ~MoverioTrackerDevice() {
-            if(ASensorManager_destroyEventQueue(m_sensorManager, m_sensorEventQueue) < 0) {
-              LOGI("[org_osvr_android_moverio]: Could not destroy sensor event queue.");
-            }
+            
         }
 
         OSVR_ReturnCode update() {
-            ASensorEvent e;
-            while (ASensorEventQueue_getEvents(m_sensorEventQueue, &e, 1) > 0)
-            {
-                switch(e.type) {
-                    case TYPE_GAME_ROTATION_VECTOR:
-                    case TYPE_ROTATION_VECTOR:
-                    case TYPE_CONTROLLER_ROTATION_VECTOR:
-                    {
-                        OSVR_OrientationState orientation;
-                        osvrQuatSetIdentity(&orientation);
-
-                        if(ASensorEventToOSVR_OrientationState(&e, orientation)) {
-                            OSVR_ChannelCount trackerChannel = -1;
-                            switch(e.type) {
-                                case TYPE_GAME_ROTATION_VECTOR:
-                                case TYPE_ROTATION_VECTOR:
-                                    trackerChannel = MOVERIO_TRACKER_CHANNEL_HEAD;
-                                    break;
-                                case TYPE_CONTROLLER_ROTATION_VECTOR:
-                                    trackerChannel = MOVERIO_TRACKER_CHANNEL_CONTROLLER;
-                                    break;
-                                default:
-                                    LOGE("[org_osvr_android_moverio]: Unknown ASensorEvent type supported by ASensorEventToOSVR_OrientationState.");
-                                    return OSVR_RETURN_FAILURE;
-                            }
-                            // @todo look into whether we can convert/use the timestamp
-                            // from the sensor event. For now, just let osvr use the
-                            // current time.
-                            if(OSVR_RETURN_SUCCESS !=
-                                osvrDeviceTrackerSendOrientation(m_dev, m_tracker, &orientation, trackerChannel)) {
-                                LOGE("[org_osvr_android_moverio]: Failed to send tracker orientation.");
-                            }
-                        }
-                    } break;
-                    case TYPE_HEADSET_TAP:
-                    {
-                        float value = e.data[0];
-                        LOGI("[org_osvr_android_moverio]: TYPE_HEADSET_TAP, e.data[0] == %f", value);
-                        OSVR_ButtonState buttonState =
-                            (value != 0.0f ? OSVR_BUTTON_PRESSED : OSVR_BUTTON_NOT_PRESSED);
-                        
-                        if(OSVR_RETURN_SUCCESS !=
-                                osvrDeviceButtonSetValue(
-                                    m_dev, m_button, buttonState, MOVERIO_BUTTON_CHANNEL_HEADSET_TAP)) {
-                            LOGE("[org_osvr_android_moverio]: Failed to send button state.");
-                        }
-                    } break;
-                    default:
-                        // not an error and doesn't need to be logged.
-                        break;
-                }
-            }
-            return OSVR_RETURN_SUCCESS;
+            return m_sensorThread->reportQueuedState(m_dev, m_tracker, m_button);
         }
     };
 
-    // Enable a sensor and set its event rate, ensuring event rate is set to fastest available
-    static bool enableSensorAndSetEventRate(const ASensor* sensor, ASensorEventQueue* sensorEventQueue) {
-        if (ASensorEventQueue_enableSensor(sensorEventQueue, sensor) < 0) {
-            LOGE("[org_osvr_android_moverio]: Couldn't enable the game rotation vector sensor.");
-            return false;
-        }
-
-        // it's an error to set the desired event rate to something less than
-        // the minimum sensor delay.
-        int minSensorDelay = ASensor_getMinDelay(sensor);
-        if(minSensorDelay == 0) {
-            LOGI("[org_osvr_android_moverio]: Sensor reports continuously. Setting event rate to 100Hz");
-            // the sensor reports continuously, not at a fixed rate
-            // so just set the event rate to 100Hz
-            minSensorDelay = 100000;
-        }
-
-        LOGI("[org_osvr_android_moverio]: Setting sensor event rate to %d", minSensorDelay);
-
-        // desired event rate
-        if (ASensorEventQueue_setEventRate(sensorEventQueue, sensor, minSensorDelay) < 0) {
-            LOGI("[org_osvr_android_moverio]: Couldn't set the event rate.");
-            // this probably isn't fatal. We'll just let it send us events as often as it wants
-        }
-        return true;
-    }
-
     class HardwareDetection {
     public:
-        HardwareDetection() {}
+        HardwareDetection()  : mSensorThreadPtr(new ASensorThread()) { }
         OSVR_ReturnCode operator()(OSVR_PluginRegContext ctx) {
 
-            LOGI("[org_osvr_android_moverio]: Got a hardware detection request");
-            // Get the ALooper for the current thread
-            ALooper* looper = ALooper_prepare(0);
-            if (NULL == looper) {
-                LOGE("[org_osvr_android_moverio]: There is no ALooper instance for the current thread. Can't get sensor data without one.");
-                return OSVR_RETURN_FAILURE;
+            if(!mDeviceAdded) {
+                if(!mSensorThreadPtr->isDeviceActive()) {
+                    LOGI("[org_osvr_android_moverio]: sensor thread reported no device enabled.");
+                    return OSVR_RETURN_FAILURE;
+                }
+
+                LOGI("[org_osvr_android_moverio]: sensor tracker plugin enabled!");
+
+                /// Create our device object
+                osvr::pluginkit::registerObjectForDeletion(ctx,
+                    new MoverioTrackerDevice(ctx, mSensorThreadPtr));
+                
+                // don't add the same device twice or more
+                mDeviceAdded = true;
             }
-
-            // The sensor manager is a singleton
-            ASensorManager* sensorManager = ASensorManager_getInstance();
-            if (NULL == sensorManager) {
-                LOGE("[org_osvr_android_moverio]: Couldn't get the ASensorManager for this thread.");
-                return OSVR_RETURN_FAILURE;
-            }
-
-            // get the default Accelerometer sensor and enable it
-            const ASensor* headSensor = ASensorManager_getDefaultSensor(sensorManager, TYPE_GAME_ROTATION_VECTOR);
-            if(NULL == headSensor) {
-                LOGI("[org_osvr_android_moverio]: Couldn't get the TYPE_GAME_ROTATION_VECTOR, trying for TYPE_ROTATION_VECTOR");
-                headSensor = ASensorManager_getDefaultSensor(sensorManager, TYPE_ROTATION_VECTOR);
-            }
-
-            if (NULL == headSensor) {
-                LOGE("[org_osvr_android_moverio]: Couldn't get the default ASensor instance for TYPE_GAME_ROTATION_VECTOR");
-                return OSVR_RETURN_FAILURE;
-            }
-
-            // get the controller sensor and enable it
-            const ASensor* controllerSensor = ASensorManager_getDefaultSensor(sensorManager, TYPE_CONTROLLER_ROTATION_VECTOR);
-            if (NULL == controllerSensor) {
-                LOGE("[org_osvr_android_moverio]: Couldn't get the default ASensor instance for TYPE_CONTROLLER_ROTATION_VECTOR");
-                return OSVR_RETURN_FAILURE;
-            }
-
-            // tap sensor
-            const ASensor* tapSensor = ASensorManager_getDefaultSensor(sensorManager, TYPE_HEADSET_TAP);
-            if (NULL == controllerSensor) {
-                LOGE("[org_osvr_android_moverio]: Couldn't get the default ASensor instance for TYPE_HEADSET_TAP");
-                return OSVR_RETURN_FAILURE;
-            }
-
-            // Create a default event queue
-            ASensorEventQueue *sensorEventQueue = ASensorManager_createEventQueue(sensorManager, looper, 3 /*LOOPER_ID_USER*/, NULL, NULL);
-            if (NULL == sensorEventQueue) {
-                LOGE("[org_osvr_android_moverio]: Couldn't create a sensor event queue.");
-                return OSVR_RETURN_FAILURE;
-            }
-
-            if(!enableSensorAndSetEventRate(headSensor, sensorEventQueue)) {
-                LOGE("[org_osvr_android_moverio]: Failure while enabling the head sensor and setting its event rate");
-                return OSVR_RETURN_FAILURE;
-            }
-
-            if(!enableSensorAndSetEventRate(controllerSensor, sensorEventQueue)) {
-                LOGE("[org_osvr_android_moverio]: Failure while enabling the controller sensor and setting its event rate");
-                return OSVR_RETURN_FAILURE;
-            }
-
-            if(!enableSensorAndSetEventRate(tapSensor, sensorEventQueue)) {
-                LOGE("[org_osvr_android_moverio]: Failure while enabling the headset tap sensor and settings its event rate");
-                return OSVR_RETURN_FAILURE;
-            }
-
-            LOGI("[org_osvr_android_moverio]: sensor tracker plugin enabled!");
-
-            /// Create our device object
-            osvr::pluginkit::registerObjectForDeletion(ctx,
-                new MoverioTrackerDevice(ctx, looper, sensorManager, sensorEventQueue));
-
             return OSVR_RETURN_SUCCESS;
         }
 
     private:
-
+        bool mDeviceAdded = false;
+        std::shared_ptr<ASensorThread> mSensorThreadPtr;
     };
 } // namespace
 

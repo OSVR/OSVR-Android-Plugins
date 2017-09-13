@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.1)
 project(org_osvr_android_moverio)
 
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 # This looks for an osvrConfig.cmake file - most of the time it can be
 # autodetected but you might need to create/extend CMAKE_PREFIX_PATH to include something like
 # C:/Users/Ryan/Desktop/build/OSVR-Core-vc12 or
