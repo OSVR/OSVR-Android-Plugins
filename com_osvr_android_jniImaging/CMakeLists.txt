@@ -29,6 +29,6 @@ osvr_add_plugin(NAME com_osvr_android_jniImaging
   "${CMAKE_CURRENT_BINARY_DIR}/com_osvr_android_jniImaging_json.h")
 
 # If you use other libraries, find them and add a line like:
-target_link_libraries(com_osvr_android_jniImaging android)
-target_link_libraries(com_osvr_android_jniImaging log)
-target_link_libraries(com_osvr_android_jniImaging opencv_core)
+target_link_libraries(com_osvr_android_jniImaging android log)
+# target_link_libraries(com_osvr_android_jniImaging log)
+# target_link_libraries(com_osvr_android_jniImaging opencv_core)
