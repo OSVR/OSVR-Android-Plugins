@@ -1,0 +1,29 @@
+{
+  "deviceVendor": "Epson",
+  "deviceName": "Epson Moverio BT-300 Device Plugin",
+  "author": "Jeremy Bell <jeremy@sensics.com>",
+  "version": 1,
+  "lastModified": "2015-01-30T21:13:07.585Z",
+  "interfaces": {
+    "tracker": {
+      "count": 2,
+      "bounded": true,
+      "position": false,
+      "orientation": true
+    },
+    "button": {
+      "count": 1
+    }
+  },
+  "semantic": {
+    "hmd": {
+      "$target": "tracker/0",
+      "button": "button/0"
+    },
+    "controller": "tracker/1"
+  },
+  "automaticAliases": {
+    "/me/head": "semantic/hmd",
+    "/me/hand": "semantic/controller"
+  }
+}

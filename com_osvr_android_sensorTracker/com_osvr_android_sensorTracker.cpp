@@ -164,6 +164,10 @@ namespace {
 
             // get the default Accelerometer sensor and enable it
             const ASensor* sensor = ASensorManager_getDefaultSensor(sensorManager, TYPE_GAME_ROTATION_VECTOR);
+            if(NULL == sensor) {
+                LOGI("[com_osvr_android_sensorTracker]: Couldn't get the TYPE_GAME_ROTATION_VECTOR, trying for TYPE_ROTATION_VECTOR");
+                sensor = ASensorManager_getDefaultSensor(sensorManager, TYPE_ROTATION_VECTOR);
+            }
             if (NULL == sensor) {
                 LOGE("[com_osvr_android_sensorTracker]: Couldn't get the default ASensor instance for TYPE_GAME_ROTATION_VECTOR");
                 return OSVR_RETURN_FAILURE;
@@ -185,10 +189,13 @@ namespace {
             // the minimum sensor delay.
             int minSensorDelay = ASensor_getMinDelay(sensor);
             if(minSensorDelay == 0) {
+                LOGI("[com_osvr_android_sensorTracker]: Sensor reports continuously. Setting event rate to 100Hz");
               // the sensor reports continuously, not at a fixed rate
               // so just set the event rate to 100Hz
               minSensorDelay = 100000;
             }
+
+            LOGI("[com_osvr_android_sensorTracker]: Setting sensor event rate to %d", minSensorDelay);
 
             // desired event rate
             if (ASensorEventQueue_setEventRate(sensorEventQueue, sensor, minSensorDelay) < 0) {

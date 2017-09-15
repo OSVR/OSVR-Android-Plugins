@@ -27,9 +27,10 @@
 #include <android/log.h>
 
 #include <osvr/PluginKit/PluginKit.h>
-#include <osvr/PluginKit/ImagingInterface.h>
+#include <osvr/PluginKit/DeviceInterfaceC.h>
+#include <osvr/PluginKit/ImagingInterfaceC.h>
 #include <osvr/Util/ChannelCountC.h>
-#include <osvr/PluginKit/DeviceInterface.h>
+#include <osvr/Util/TimeValueC.h>
 #include <osvr/Util/StringLiteralFileToString.h>
 //#include <opencv2/imgproc/imgproc.hpp>
 
@@ -105,79 +106,102 @@ static void NV21_to_RGBA(OSVR_ImageBufferElement *rgba, OSVR_ImageBufferElement 
 namespace {
 
     class AndroidJniImagingDevice {
+    private:
+        OSVR_DeviceToken m_dev;
+        OSVR_ImagingDeviceInterface m_imaging;
+        OSVR_ImageBufferElement * m_frame;
+        int m_camera;
+        int m_channel;
+        int m_reportNumber;
     public:
         AndroidJniImagingDevice(OSVR_PluginRegContext ctx, int cameraNum = 0, int channel = 0)
           : m_camera(cameraNum), m_channel(channel), m_reportNumber(0) {
             // @todo sanity check for constructor arguments. All ptrs have to
             // be non-null
-            //LOGI("[OSVR] AndroidJniImagingDevice instantiated");
+            LOGI("[com_osvr_android_jniImaging] AndroidJniImagingDevice instantiated");
             /// Create the initialization options
             OSVR_DeviceInitOptions opts = osvrDeviceCreateInitOptions(ctx);
 
             /// Configure an imaging interface (with the default number of sensors,
             /// 1)
-            m_imaging = osvr::pluginkit::ImagingInterface(opts);
+            //m_imaging = osvr::pluginkit::ImagingInterface(opts);
+            if(OSVR_RETURN_FAILURE == osvrDeviceImagingConfigure(opts, &m_imaging, 1)) {
+                LOGE("[com_osvr_android_jniImaging] Could not configure imaging interface.");
+            }
 
             /// Come up with a device name
             std::ostringstream os;
             os << "Camera" << cameraNum << "_" << m_channel;
 
             /// Create an asynchronous (threaded) device
-            m_dev.initAsync(ctx, os.str(), opts);
             // Puts an object in m_dev that knows it's a
             // threaded device so osvrDeviceSendData knows
             // that it needs to get a connection lock first.
+            //m_dev.initAsync(ctx, os.str(), opts);
+            if(OSVR_RETURN_FAILURE == osvrDeviceAsyncInitWithOptions(ctx, os.str().c_str(), opts, &m_dev)) {
+                LOGE("[com_osvr_android_jniImaging] osvrDeviceAsyncInitWithOptions failed.");
+            }
 
             /// Send the JSON.
-            m_dev.sendJsonDescriptor(
-                osvr::util::makeString(com_osvr_android_jniImaging_json));
+            // m_dev.sendJsonDescriptor(
+            //     osvr::util::makeString(com_osvr_android_jniImaging_json));
+            std::string jsonDescriptorStr = osvr::util::makeString(com_osvr_android_jniImaging_json);
+            if(OSVR_RETURN_FAILURE == osvrDeviceSendJsonDescriptor(m_dev, jsonDescriptorStr.c_str(), jsonDescriptorStr.size())) {
+                LOGE("[com_osvr_android_jniImaging] osvrDeviceSendJsonDescriptor call failed.");
+            }
 
             /// Sets the update callback
-            m_dev.registerUpdateCallback(this);
+            //m_dev.registerUpdateCallback(this);
+            if(OSVR_RETURN_FAILURE == osvrDeviceRegisterUpdateCallback(m_dev, update, this)) {
+                LOGE("[com_osvr_android_jniImaging] osvrDeviceRegisterUpdateCallback failed.");
+            }
         }
 
-        OSVR_ReturnCode update() {
-          //LOGI("[OSVR] AndroidJniImagingDevice::update # %d called", m_reportNumber++);
+        static OSVR_ReturnCode update(void* userData) {
+            AndroidJniImagingDevice* imagingDevice = (AndroidJniImagingDevice*)userData;
 
-          // Get a timestamp for the upcoming camera grab.
-          osvr::util::time::TimeValue frameTime = osvr::util::time::getNow();
+            //LOGI("[com_osvr_android_jniImaging] AndroidJniImagingDevice::update # %d called", imagingDevice->m_reportNumber++);
 
-          // Send the image.
-          // Note that if larger than 160x120 (RGB), will used shared memory
-          // backend only.
+            // Get a timestamp for the upcoming camera grab.
+            //osvr::util::time::TimeValue frameTime = osvr::util::time::getNow();
+            OSVR_TimeValue nowTimeValue;
+            osvrTimeValueGetNow(&nowTimeValue);
 
-          if(gLastFrame) {
-              //LOGI("[OSVR] image report # %d called", m_reportNumber++);
-              gLastFrameMetadata.channels = 4;
-              gLastFrameMetadata.depth = 1;
-              unsigned int width = gLastFrameMetadata.width;
-              unsigned int height = gLastFrameMetadata.height;
-              unsigned int channels = gLastFrameMetadata.channels;
-               OSVR_ImageBufferElement* buffer
-                   = new OSVR_ImageBufferElement[width * height * channels];
+            // Send the image.
+            // Note that if larger than 160x120 (RGB), will used shared memory
+            // backend only.
 
-              NV21_to_RGBA(buffer, gLastFrame, width, height);
-              cv::Mat frame(height, width, CV_8UC4, buffer);
+            if(gLastFrame) {
+                //LOGI("[com_osvr_android_jniImaging] image report # %d", imagingDevice->m_reportNumber++);
+                gLastFrameMetadata.channels = 4;
+                gLastFrameMetadata.depth = 1;
+                unsigned int width = gLastFrameMetadata.width;
+                unsigned int height = gLastFrameMetadata.height;
+                unsigned int channels = gLastFrameMetadata.channels;
+                OSVR_ImageBufferElement* buffer
+                    = new OSVR_ImageBufferElement[width * height * channels];
 
-              m_dev.send(m_imaging, osvr::pluginkit::ImagingMessage(frame), frameTime);
+                NV21_to_RGBA(buffer, gLastFrame, width, height);
+                //cv::Mat frame(height, width, CV_8UC4, buffer);
 
-              // The interface takes ownership of the image data. Also, we don't
-              // want to send the image more than once.
-              delete[] buffer;
-              gLastFrame = NULL;
-          }
+                //m_dev.send(m_imaging, osvr::pluginkit::ImagingMessage(frame), frameTime);
 
-          return OSVR_RETURN_SUCCESS;
+                if(OSVR_RETURN_FAILURE ==
+                    osvrDeviceImagingReportFrame(
+                        imagingDevice->m_dev, imagingDevice->m_imaging, 
+                        gLastFrameMetadata, buffer, imagingDevice->m_channel, &nowTimeValue)) {
+                        LOGE("[com_osvr_android_jniImaging] osvrDeviceImagingReportFrame failed.");
+                        
+                }
+
+                // The interface takes ownership of the image data. Also, we don't
+                // want to send the image more than once.
+                delete[] buffer;
+                gLastFrame = NULL;
+            }
+
+            return OSVR_RETURN_SUCCESS;
         }
-
-    private:
-
-      osvr::pluginkit::DeviceToken m_dev;
-      osvr::pluginkit::ImagingInterface m_imaging;
-      int m_camera;
-      int m_channel;
-      OSVR_ImageBufferElement * m_frame;
-      int m_reportNumber;
     };
 
     class HardwareDetection {
@@ -188,7 +212,7 @@ namespace {
                 return OSVR_RETURN_SUCCESS;
             }
 
-            //LOGI("[OSVR] Android Jni Imaging plugin: Got a hardware detection request");
+            LOGI("[com_osvr_android_jniImaging] Android Jni Imaging plugin: Got a hardware detection request");
 
             /// Create our device object
             osvr::pluginkit::registerObjectForDeletion(ctx,

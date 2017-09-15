@@ -1,3 +1,4 @@
 cmake_minimum_required(VERSION 3.1)
 add_subdirectory(com_osvr_android_jniImaging)
 add_subdirectory(com_osvr_android_sensorTracker)
+add_subdirectory(org_osvr_android_moverio)
