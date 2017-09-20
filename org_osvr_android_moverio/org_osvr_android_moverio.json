@@ -12,18 +12,29 @@
       "orientation": true
     },
     "button": {
-      "count": 1
+      "count": 9
     }
   },
   "semantic": {
     "hmd": {
       "$target": "tracker/0",
-      "button": "button/0"
+      "tap": "button/8"
     },
-    "controller": "tracker/1"
+    "controller": {
+      "0": "button/0",
+      "1": "button/1",
+      "2": "button/2",
+      "3": "button/3",
+      "4": "button/4",
+      "volumeUp": "button/5",
+      "volumeDown": "button/6",
+      "back": "button/7"
+    },
+    "base": "tracker/1"
   },
   "automaticAliases": {
-    "/me/head": "semantic/hmd",
-    "/me/hand": "semantic/controller"
+    "/me/head": "semantic/hmd/*",
+    "/me/hand": "semantic/base",
+    "/controller/left": "semantic/controller/*"
   }
 }
