@@ -33,6 +33,7 @@
 // Library/third-party includes
 #include <android/sensor.h>
 #include <android/log.h>
+#include <android/keycodes.h>
 
 // Standard includes
 #include <iostream>
@@ -47,6 +48,48 @@
 #define  LOGI(...)  __android_log_print(ANDROID_LOG_INFO,LOG_TAG,__VA_ARGS__)
 #define  LOGE(...)  __android_log_print(ANDROID_LOG_ERROR,LOG_TAG,__VA_ARGS__)
 
+#include <jni.h>
+
+extern "C" {
+    JNIEXPORT void JNICALL Java_com_osvr_common_jni_JNIBridge_reportKeyDown(
+        JNIEnv * env, jclass clazz, jint keyCode);
+    JNIEXPORT void JNICALL Java_com_osvr_common_jni_JNIBridge_reportKeyUp(
+        JNIEnv * env, jclass clazz, jint keyCode);
+}
+
+namespace {
+    static std::mutex sInputMutex;
+    typedef struct AndroidButtonStateWithKeyCode {
+        int keyCode;
+        OSVR_ButtonState state; 
+        OSVR_TimeValue timestamp;
+    } AndroidButtonStateWithKeyCode;
+
+    std::queue<AndroidButtonStateWithKeyCode> sButtonStateQueueSynced;
+
+    void pushButtonState(int keyCode, OSVR_ButtonState state) {
+        std::lock_guard<std::mutex> lock(sInputMutex);
+        OSVR_TimeValue now;
+        osvrTimeValueGetNow(&now);
+        AndroidButtonStateWithKeyCode buttonState = {0};
+        buttonState.keyCode = keyCode;
+        buttonState.state = state;
+        buttonState.timestamp = now;
+        sButtonStateQueueSynced.push(buttonState);
+    }
+}
+
+JNIEXPORT void JNICALL Java_com_osvr_common_jni_JNIBridge_reportKeyDown(JNIEnv * env, jclass clazz, jint keyCode) {
+    LOGI("[org_osvr_android_moverio]: got reportKeyDown(%d)", keyCode);
+    pushButtonState(keyCode, OSVR_BUTTON_PRESSED);
+}
+
+JNIEXPORT void JNICALL Java_com_osvr_common_jni_JNIBridge_reportKeyUp(JNIEnv * env, jclass clazz, jint keyCode) {
+    LOGI("[org_osvr_android_moverio]: got reportKeyUp(%d)", keyCode);
+    pushButtonState(keyCode, OSVR_BUTTON_NOT_PRESSED);
+}
+
+
 // Anonymous namespace to avoid symbol collision
 namespace {
     // Android standard sensor types @todo are these defined in a header somewhere?
@@ -58,13 +101,28 @@ namespace {
     static const int TYPE_CONTROLLER_ROTATION_VECTOR = 0x0010000b;
 
     // OSVR tracker channels
-    static const OSVR_ChannelCount MOVERIO_NUM_TRACKER_CHANNELS = 2;
-    static const OSVR_ChannelCount MOVERIO_TRACKER_CHANNEL_HEAD = 0;
-    static const OSVR_ChannelCount MOVERIO_TRACKER_CHANNEL_CONTROLLER = 1;
+    enum {
+        MOVERIO_TRACKER_CHANNEL_HEAD = 0,
+        MOVERIO_TRACKER_CHANNEL_CONTROLLER = 1,
+
+        MOVERIO_NUM_TRACKER_CHANNELS = 2
+    };
 
     // other consts
-    static const OSVR_ChannelCount MOVERIO_NUM_BUTTON_CHANNELS = 1;
-    static const OSVR_ChannelCount MOVERIO_BUTTON_CHANNEL_HEADSET_TAP = 0;
+    enum {
+        ANDROID_BUTTON_CHANNEL_DPAD_CENTER = 0,
+        ANDROID_BUTTON_CHANNEL_DPAD_DOWN = 1,
+        ANDROID_BUTTON_CHANNEL_DPAD_RIGHT = 2,
+        ANDROID_BUTTON_CHANNEL_DPAD_LEFT = 3,
+        ANDROID_BUTTON_CHANNEL_DPAD_UP = 4,
+        ANDROID_BUTTON_CHANNEL_VOLUME_UP = 5,
+        ANDROID_BUTTON_CHANNEL_VOLUME_DOWN = 6,
+        ANDROID_BUTTON_CHANNEL_BACK = 7,
+        
+        MOVERIO_BUTTON_CHANNEL_HEADSET_TAP = 8,
+
+        MOVERIO_NUM_BUTTON_CHANNELS = 9
+    };
 
     static bool ASensorEventToOSVR_OrientationState(const ASensorEvent* e, OSVR_OrientationState& orientationOut) {
         if(!e) {
@@ -171,7 +229,7 @@ namespace {
         void run() {
             LOGI("[org_osvr_android_moverio]: Got a hardware detection request");
             // Get the ALooper for the current thread
-            ALooper* looper = ALooper_prepare(0);
+            ALooper* looper = ALooper_prepare(ALOOPER_PREPARE_ALLOW_NON_CALLBACKS);
             if (NULL == looper) {
                 LOGE("[org_osvr_android_moverio]: There is no ALooper instance for the current thread. Can't get sensor data without one.");
                 return;
@@ -230,10 +288,10 @@ namespace {
                     return;
                 }
 
-                if(!enableSensorAndSetEventRate(tapSensor, mSensorEventQueueSynced)) {
-                    LOGE("[org_osvr_android_moverio]: Failure while enabling the headset tap sensor and settings its event rate");
-                    return;
-                }
+                // if(!enableSensorAndSetEventRate(tapSensor, mSensorEventQueueSynced)) {
+                //     LOGE("[org_osvr_android_moverio]: Failure while enabling the headset tap sensor and settings its event rate");
+                //     return;
+                // }
             } // end lock_guard(mMutex) block
 
             while(true) {
@@ -365,6 +423,8 @@ namespace {
                     return OSVR_RETURN_FAILURE;
                 }
             }
+
+            return OSVR_RETURN_SUCCESS;
         }
     };
 
@@ -405,8 +465,68 @@ namespace {
             
         }
 
+        OSVR_ReturnCode reportQueuedAndroidButtonState(osvr::pluginkit::DeviceToken dev, OSVR_ButtonDeviceInterface button) {
+            std::lock_guard<std::mutex> lock(sInputMutex);
+            while(!sButtonStateQueueSynced.empty()) {
+                auto buttonReport = sButtonStateQueueSynced.front();
+                sButtonStateQueueSynced.pop();
+
+                OSVR_ChannelCount buttonChannel = -1;
+                LOGI("[org_osvr_android_moverio]: dequeued button report for keycode %d", buttonReport.keyCode);
+                switch(buttonReport.keyCode) {
+                    case AKEYCODE_DPAD_UP:
+                        LOGI("[org_osvr_android_moverio] using ANDROID_BUTTON_CHANNEL_DPAD_UP button channel.");
+                        buttonChannel = ANDROID_BUTTON_CHANNEL_DPAD_UP;
+                        break;
+                    case AKEYCODE_DPAD_DOWN:
+                        LOGI("[org_osvr_android_moverio] using ANDROID_BUTTON_CHANNEL_DPAD_DOWN button channel.");
+                        buttonChannel = ANDROID_BUTTON_CHANNEL_DPAD_DOWN;
+                        break;
+                    case AKEYCODE_DPAD_LEFT:
+                        LOGI("[org_osvr_android_moverio] using ANDROID_BUTTON_CHANNEL_DPAD_LEFT button channel.");
+                        buttonChannel = ANDROID_BUTTON_CHANNEL_DPAD_LEFT;
+                        break;
+                    case AKEYCODE_DPAD_RIGHT:
+                        LOGI("[org_osvr_android_moverio] using ANDROID_BUTTON_CHANNEL_DPAD_RIGHT button channel.");
+                        buttonChannel = ANDROID_BUTTON_CHANNEL_DPAD_RIGHT;
+                        break;
+                    case AKEYCODE_DPAD_CENTER:
+                        LOGI("[org_osvr_android_moverio] using ANDROID_BUTTON_CHANNEL_DPAD_CENTER button channel.");
+                        buttonChannel = ANDROID_BUTTON_CHANNEL_DPAD_CENTER;
+                        break;
+                    case AKEYCODE_VOLUME_UP:
+                        LOGI("[org_osvr_android_moverio] using ANDROID_BUTTON_CHANNEL_VOLUME_UP button channel.");
+                        buttonChannel = ANDROID_BUTTON_CHANNEL_VOLUME_UP;
+                        break;
+                    case AKEYCODE_VOLUME_DOWN:
+                        LOGI("[org_osvr_android_moverio] using ANDROID_BUTTON_CHANNEL_VOLUME_DOWN button channel.");
+                        buttonChannel = ANDROID_BUTTON_CHANNEL_VOLUME_DOWN;
+                        break;
+                    case AKEYCODE_BACK:
+                        LOGI("[org_osvr_android_moverio] using ANDROID_BUTTON_BACK button channel.");
+                        buttonChannel = ANDROID_BUTTON_CHANNEL_BACK;
+                        break;
+                    default:
+                        LOGE("[org_osvr_android_moverio]: unknown button keycode: %d", buttonReport.keyCode);
+                        continue;
+                }
+                if(buttonChannel >= 0) {
+                    if(OSVR_RETURN_SUCCESS !=
+                        osvrDeviceButtonSetValueTimestamped(
+                                dev, button, buttonReport.state, buttonChannel, &buttonReport.timestamp)) {
+                        LOGE("[org_osvr_android_moverio]: Failed to send button state.");
+                        return OSVR_RETURN_FAILURE;
+                    }
+                }
+            }
+        }
+
         OSVR_ReturnCode update() {
-            return m_sensorThread->reportQueuedState(m_dev, m_tracker, m_button);
+            OSVR_ReturnCode buttonRet = reportQueuedAndroidButtonState(m_dev, m_button);
+            OSVR_ReturnCode sensorRet = m_sensorThread->reportQueuedState(m_dev, m_tracker, m_button);
+
+            bool ret = buttonRet == OSVR_RETURN_SUCCESS && sensorRet == OSVR_RETURN_SUCCESS;
+            return ret ? OSVR_RETURN_SUCCESS : OSVR_RETURN_FAILURE;
         }
     };
 
