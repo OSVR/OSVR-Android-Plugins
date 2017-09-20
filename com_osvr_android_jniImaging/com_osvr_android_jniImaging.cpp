@@ -49,9 +49,35 @@
 #define  LOGI(...)  __android_log_print(ANDROID_LOG_INFO,LOG_TAG,__VA_ARGS__)
 #define  LOGE(...)  __android_log_print(ANDROID_LOG_ERROR,LOG_TAG,__VA_ARGS__)
 
-extern OSVR_ImageBufferElement *gLastFrame;
-extern OSVR_ImagingMetadata gLastFrameMetadata;
+OSVR_ImageBufferElement *gLastFrame = NULL;
+OSVR_ImageBufferElement *gLastFrameBuffer = NULL;
+OSVR_ImagingMetadata gLastFrameMetadata;
 
+extern "C" {
+    JNIEXPORT void JNICALL Java_com_osvr_common_jni_JNIBridge_reportFrame(JNIEnv * env, jclass clazz,
+      jbyteArray data, jlong width, jlong height);
+}
+
+JNIEXPORT void JNICALL Java_com_osvr_common_jni_JNIBridge_reportFrame(JNIEnv * env, jclass clazz,
+    jbyteArray data, jlong width, jlong height) {
+
+    gLastFrameMetadata.height = (OSVR_ImageDimension)height;
+    gLastFrameMetadata.width = (OSVR_ImageDimension)width;
+    gLastFrameMetadata.channels = (OSVR_ImageChannels)4;
+    gLastFrameMetadata.depth = (OSVR_ImageDepth)1;
+
+    // @todo determine whether the current metadata matches the last metadata,
+    // and if so, reuse the last frame buffer instead of deleting and recreating.
+    // better yet, use a ring buffer so that image reports aren't lost if update
+    // isn't called frequently enough.
+    int size = env->GetArrayLength(data);
+
+    if(gLastFrameBuffer == NULL) {
+        gLastFrameBuffer = new OSVR_ImageBufferElement[size];
+    }
+    gLastFrame = gLastFrameBuffer;
+    env->GetByteArrayRegion(data, 0, size, reinterpret_cast<jbyte*>(gLastFrameBuffer));
+}
 
 // Based on algorithm by andre chen
 // https://github.com/andrechen/yuv2rgb

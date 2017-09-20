@@ -8,7 +8,7 @@
     <http://sensics.com/osvr>
     */
 
-// Copyright 2015 Sensics, Inc.
+// Copyright 2017 Sensics, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -80,12 +80,10 @@ namespace {
 }
 
 JNIEXPORT void JNICALL Java_com_osvr_common_jni_JNIBridge_reportKeyDown(JNIEnv * env, jclass clazz, jint keyCode) {
-    LOGI("[org_osvr_android_moverio]: got reportKeyDown(%d)", keyCode);
     pushButtonState(keyCode, OSVR_BUTTON_PRESSED);
 }
 
 JNIEXPORT void JNICALL Java_com_osvr_common_jni_JNIBridge_reportKeyUp(JNIEnv * env, jclass clazz, jint keyCode) {
-    LOGI("[org_osvr_android_moverio]: got reportKeyUp(%d)", keyCode);
     pushButtonState(keyCode, OSVR_BUTTON_NOT_PRESSED);
 }
 
@@ -472,42 +470,32 @@ namespace {
                 sButtonStateQueueSynced.pop();
 
                 OSVR_ChannelCount buttonChannel = -1;
-                LOGI("[org_osvr_android_moverio]: dequeued button report for keycode %d", buttonReport.keyCode);
                 switch(buttonReport.keyCode) {
                     case AKEYCODE_DPAD_UP:
-                        LOGI("[org_osvr_android_moverio] using ANDROID_BUTTON_CHANNEL_DPAD_UP button channel.");
                         buttonChannel = ANDROID_BUTTON_CHANNEL_DPAD_UP;
                         break;
                     case AKEYCODE_DPAD_DOWN:
-                        LOGI("[org_osvr_android_moverio] using ANDROID_BUTTON_CHANNEL_DPAD_DOWN button channel.");
                         buttonChannel = ANDROID_BUTTON_CHANNEL_DPAD_DOWN;
                         break;
                     case AKEYCODE_DPAD_LEFT:
-                        LOGI("[org_osvr_android_moverio] using ANDROID_BUTTON_CHANNEL_DPAD_LEFT button channel.");
                         buttonChannel = ANDROID_BUTTON_CHANNEL_DPAD_LEFT;
                         break;
                     case AKEYCODE_DPAD_RIGHT:
-                        LOGI("[org_osvr_android_moverio] using ANDROID_BUTTON_CHANNEL_DPAD_RIGHT button channel.");
                         buttonChannel = ANDROID_BUTTON_CHANNEL_DPAD_RIGHT;
                         break;
                     case AKEYCODE_DPAD_CENTER:
-                        LOGI("[org_osvr_android_moverio] using ANDROID_BUTTON_CHANNEL_DPAD_CENTER button channel.");
                         buttonChannel = ANDROID_BUTTON_CHANNEL_DPAD_CENTER;
                         break;
                     case AKEYCODE_VOLUME_UP:
-                        LOGI("[org_osvr_android_moverio] using ANDROID_BUTTON_CHANNEL_VOLUME_UP button channel.");
                         buttonChannel = ANDROID_BUTTON_CHANNEL_VOLUME_UP;
                         break;
                     case AKEYCODE_VOLUME_DOWN:
-                        LOGI("[org_osvr_android_moverio] using ANDROID_BUTTON_CHANNEL_VOLUME_DOWN button channel.");
                         buttonChannel = ANDROID_BUTTON_CHANNEL_VOLUME_DOWN;
                         break;
                     case AKEYCODE_BACK:
-                        LOGI("[org_osvr_android_moverio] using ANDROID_BUTTON_BACK button channel.");
                         buttonChannel = ANDROID_BUTTON_CHANNEL_BACK;
                         break;
                     default:
-                        LOGE("[org_osvr_android_moverio]: unknown button keycode: %d", buttonReport.keyCode);
                         continue;
                 }
                 if(buttonChannel >= 0) {
