@@ -13,6 +13,9 @@
     },
     "button": {
       "count": 9
+    },
+    "analog": {
+      "count": 2
     }
   },
   "semantic": {
@@ -30,11 +33,16 @@
       "volumeDown": "button/6",
       "back": "button/7"
     },
+    "mouse": {
+      "x": "analog/0",
+      "y": "analog/1"
+    },
     "base": "tracker/1"
   },
   "automaticAliases": {
     "/me/head": "semantic/hmd/*",
     "/me/hand": "semantic/base",
-    "/controller/left": "semantic/controller/*"
+    "/controller/left": "semantic/controller/*",
+    "/mouse": "semantic/mouse/*"
   }
 }
