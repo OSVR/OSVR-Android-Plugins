@@ -26,7 +26,8 @@
 #include <osvr/PluginKit/PluginKit.h>
 #include <osvr/PluginKit/TrackerInterfaceC.h>
 #include <osvr/PluginKit/ButtonInterfaceC.h>
-#include <osvr/PluginKit/AnalogInterfaceC.h>
+#include <osvr/PluginKit/Location2DInterfaceC.h>
+#include <osvr/Util/Vec2C.h>
 
 // Generated JSON header file
 #include "org_osvr_android_moverio_json.h"
@@ -85,8 +86,7 @@ namespace {
     static std::mutex sMouseMutex;
 
     typedef struct AndroidMouseState {
-        OSVR_AnalogState xState;
-        OSVR_AnalogState yState;
+        OSVR_Location2DState location2DState;
         OSVR_AnalogState xMinState;
         OSVR_AnalogState xMaxState;
         OSVR_AnalogState yMinState;
@@ -103,8 +103,8 @@ namespace {
         OSVR_TimeValue now;
         osvrTimeValueGetNow(&now);
         AndroidMouseState mouseState = {0};
-        mouseState.xState = xState;
-        mouseState.yState = yState;
+        osvrVec2SetX(&mouseState.location2DState, xState);
+        osvrVec2SetY(&mouseState.location2DState, yState);
         mouseState.xMinState = xMinState;
         mouseState.xMaxState = xMaxState;
         mouseState.yMinState = yMinState;
@@ -162,10 +162,9 @@ namespace {
     };
 
     enum {
-        ANDROID_ANALOG_CHANNEL_MOUSE_X = 0,
-        ANDROID_ANALOG_CHANNEL_MOUSE_Y,
+        ANDROID_LOCATION2D_CHANNEL_MOUSE = 0,
         
-        ANDROID_NUM_ANALOG_CHANNELS,
+        ANDROID_NUM_LOCATION2D_CHANNELS,
     };
 
     static bool ASensorEventToOSVR_OrientationState(const ASensorEvent* e, OSVR_OrientationState& orientationOut) {
@@ -477,7 +476,7 @@ namespace {
         osvr::pluginkit::DeviceToken m_dev;
         OSVR_TrackerDeviceInterface m_tracker;
         OSVR_ButtonDeviceInterface m_button;
-        OSVR_AnalogDeviceInterface m_analog;
+        OSVR_Location2D_DeviceInterface m_location2D;
         std::shared_ptr<ASensorThread> m_sensorThread;
 
     public:
@@ -496,8 +495,8 @@ namespace {
             /// Configure the button interfaces
             osvrDeviceButtonConfigure(opts, &m_button, MOVERIO_NUM_BUTTON_CHANNELS);
 
-            /// Configure the analog interfaces
-            osvrDeviceAnalogConfigure(opts, &m_analog, ANDROID_NUM_ANALOG_CHANNELS);
+            /// Configure the location2D interfaces
+            osvrDeviceLocation2DConfigure(opts, &m_location2D, ANDROID_NUM_LOCATION2D_CHANNELS);
 
             /// Create the sync device token with the options
             m_dev.initSync(ctx, "MoverioTracker", opts);
@@ -560,26 +559,18 @@ namespace {
             return OSVR_RETURN_SUCCESS;
         }
 
-        OSVR_ReturnCode reportQueuedAndroidMouseState(osvr::pluginkit::DeviceToken dev, OSVR_AnalogDeviceInterface analog) {
+        OSVR_ReturnCode reportQueuedAndroidMouseState(osvr::pluginkit::DeviceToken dev, OSVR_Location2D_DeviceInterface location2D) {
             std::lock_guard<std::mutex> lock(sMouseMutex);
             while(!sMouseStateQueueSynced.empty()) {
                 auto mouseReport = sMouseStateQueueSynced.front();
                 sMouseStateQueueSynced.pop();
 
                 if(OSVR_RETURN_SUCCESS !=
-                    osvrDeviceAnalogSetValueTimestamped(
-                            dev, analog, mouseReport.xState, ANDROID_ANALOG_CHANNEL_MOUSE_X, &mouseReport.timestamp)) {
+                    osvrDeviceLocation2DReportData(
+                            location2D, mouseReport.location2DState, ANDROID_LOCATION2D_CHANNEL_MOUSE, &mouseReport.timestamp)) {
                     LOGE("[org_osvr_android_moverio]: Failed to send analog state.");
                     return OSVR_RETURN_FAILURE;
                 }
-
-                if(OSVR_RETURN_SUCCESS !=
-                    osvrDeviceAnalogSetValueTimestamped(
-                            dev, analog, mouseReport.yState, ANDROID_ANALOG_CHANNEL_MOUSE_Y, &mouseReport.timestamp)) {
-                    LOGE("[org_osvr_android_moverio]: Failed to send analog state.");
-                    return OSVR_RETURN_FAILURE;
-                }
-
             }
             return OSVR_RETURN_SUCCESS;
         }
@@ -587,7 +578,7 @@ namespace {
         OSVR_ReturnCode update() {
             OSVR_ReturnCode buttonRet = reportQueuedAndroidButtonState(m_dev, m_button);
             OSVR_ReturnCode sensorRet = m_sensorThread->reportQueuedState(m_dev, m_tracker, m_button);
-            OSVR_ReturnCode mouseRet = reportQueuedAndroidMouseState(m_dev, m_analog);
+            OSVR_ReturnCode mouseRet = reportQueuedAndroidMouseState(m_dev, m_location2D);
 
             bool ret = buttonRet == OSVR_RETURN_SUCCESS &&
                 sensorRet == OSVR_RETURN_SUCCESS &&
