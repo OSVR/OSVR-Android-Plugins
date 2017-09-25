@@ -296,22 +296,19 @@ namespace {
                 }
 
                 if (NULL == headSensor) {
-                    LOGE("[org_osvr_android_moverio]: Couldn't get the default ASensor instance for TYPE_GAME_ROTATION_VECTOR");
-                    return;
+                    LOGI("[org_osvr_android_moverio]: Couldn't get the default ASensor instance for TYPE_GAME_ROTATION_VECTOR");
                 }
 
                 // get the controller sensor and enable it
                 const ASensor* controllerSensor = ASensorManager_getDefaultSensor(mSensorManagerSynced, TYPE_CONTROLLER_ROTATION_VECTOR);
                 if (NULL == controllerSensor) {
-                    LOGE("[org_osvr_android_moverio]: Couldn't get the default ASensor instance for TYPE_CONTROLLER_ROTATION_VECTOR");
-                    return;
+                    LOGI("[org_osvr_android_moverio]: Couldn't get the default ASensor instance for TYPE_CONTROLLER_ROTATION_VECTOR");
                 }
 
                 // tap sensor
                 const ASensor* tapSensor = ASensorManager_getDefaultSensor(mSensorManagerSynced, TYPE_HEADSET_TAP);
                 if (NULL == controllerSensor) {
-                    LOGE("[org_osvr_android_moverio]: Couldn't get the default ASensor instance for TYPE_HEADSET_TAP");
-                    return;
+                    LOGI("[org_osvr_android_moverio]: Couldn't get the default ASensor instance for TYPE_HEADSET_TAP");
                 }
 
                 // Create a default event queue
@@ -321,19 +318,16 @@ namespace {
                     return;
                 }
 
-                if(!enableSensorAndSetEventRate(headSensor, mSensorEventQueueSynced)) {
-                    LOGE("[org_osvr_android_moverio]: Failure while enabling the head sensor and setting its event rate");
-                    return;
+                if(headSensor && !enableSensorAndSetEventRate(headSensor, mSensorEventQueueSynced)) {
+                    LOGI("[org_osvr_android_moverio]: Failure while enabling the head sensor and setting its event rate");
                 }
 
-                if(!enableSensorAndSetEventRate(controllerSensor, mSensorEventQueueSynced)) {
-                    LOGE("[org_osvr_android_moverio]: Failure while enabling the controller sensor and setting its event rate");
-                    return;
+                if(controllerSensor && !enableSensorAndSetEventRate(controllerSensor, mSensorEventQueueSynced)) {
+                    LOGI("[org_osvr_android_moverio]: Failure while enabling the controller sensor and setting its event rate");
                 }
 
-                // if(!enableSensorAndSetEventRate(tapSensor, mSensorEventQueueSynced)) {
+                // if(tapSensor && !enableSensorAndSetEventRate(tapSensor, mSensorEventQueueSynced)) {
                 //     LOGE("[org_osvr_android_moverio]: Failure while enabling the headset tap sensor and settings its event rate");
-                //     return;
                 // }
             } // end lock_guard(mMutex) block
 
